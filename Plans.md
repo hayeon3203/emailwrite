@@ -30,13 +30,13 @@
 - [x] 아바타 클릭 → 채팅 팝업 토글 (플레이스홀더 팝업, 실제 UI는 M4)
 - [x] 단축키 → 채팅 팝업 토글 (동일 핸들러 재사용)
 
-### M3. Outlook 컨텍스트 리더
-- [ ] `ActiveInspector().CurrentItem` (열려있는 메일) 우선, 없으면 `ActiveExplorer().Selection` (목록 선택 항목)
-- [ ] 추출 필드: 제목, 발신자, 본문, 수신 시각
-- [ ] `MailItem.GetConversation()`으로 스레드 히스토리(최근 N개) 추가 추출
-- [ ] Outlook 미실행/선택된 메일 없음 예외 처리
-- [ ] 콘솔/디버그 출력으로 먼저 검증 (UI 연결 전 단독 테스트)
-- [ ] 보안 경고 팝업 발생 여부 실제 확인 (발신자 주소 접근 시 뜰 수 있음)
+### M3. Outlook 컨텍스트 리더 ✅
+- [x] `ActiveInspector().CurrentItem` (열려있는 메일) 우선, 없으면 `ActiveExplorer().Selection` (목록 선택 항목)
+- [x] 추출 필드: 제목, 발신자, 본문, 수신 시각
+- [x] `MailItem.GetConversation()`으로 스레드 히스토리(최근 N개) 추가 추출
+- [x] Outlook 미실행/선택된 메일 없음 예외 처리
+- [x] 콘솔/디버그 출력으로 먼저 검증 (`tools/OutlookProbe`, UI 연결 전 단독 테스트)
+- [x] 보안 경고 팝업 발생 여부 실제 확인 — SenderName만 사용(SenderEmailAddress 미접근)해서 실제 실행 시 팝업 안 뜸
 
 ### M4. 채팅 팝업 UI
 - [ ] 아바타 위쪽에 뜨는 borderless 작은 창

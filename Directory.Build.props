@@ -1,0 +1,20 @@
+<Project>
+  <!--
+    Microsoft.Office.Interop.Outlook.dll depends on the "office" PIA
+    (Microsoft.Office.Core), which Office setup registers in the GAC but
+    isn't distributed via NuGet, and .NET (Core) doesn't probe the GAC like
+    .NET Framework did. A raw <Reference> only gets copied to a project's
+    own output directory, it doesn't flow transitively through
+    ProjectReferences, so every exe project that (directly or via
+    EmailWrite.Core) touches Outlook types needs this applied directly —
+    hence putting it here so it's added uniformly to every project.
+    Vendored from a local machine's GAC into lib/office-pia (freely
+    redistributable under Microsoft's PIA redistributable terms).
+  -->
+  <ItemGroup>
+    <Reference Include="office">
+      <HintPath>$(MSBuildThisFileDirectory)lib\office-pia\office.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
