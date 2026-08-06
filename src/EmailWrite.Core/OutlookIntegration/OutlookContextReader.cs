@@ -26,9 +26,9 @@ internal static class RunningComObject
 /// <summary>
 /// Reads the mail currently open (or selected) in the running classic desktop
 /// Outlook via the COM Object Model. Only touches display-safe properties
-/// (Subject/SenderName/Body/ReceivedTime) — avoids SenderEmailAddress /
-/// Recipients, which can trigger Outlook's "a program is trying to access
-/// e-mail information" security prompt.
+/// (Subject/SenderName/Body/ReceivedTime/attachment display names) — avoids
+/// SenderEmailAddress / Recipients, which can trigger Outlook's "a program is
+/// trying to access e-mail information" security prompt.
 /// </summary>
 public static class OutlookContextReader
 {
@@ -83,7 +83,38 @@ public static class OutlookContextReader
             Subject: mail.Subject ?? string.Empty,
             SenderName: mail.SenderName ?? string.Empty,
             Body: mail.Body ?? string.Empty,
-            ReceivedTime: mail.ReceivedTime);
+            ReceivedTime: mail.ReceivedTime,
+            AttachmentNames: GetAttachmentNames(mail));
+    }
+
+    // PR_ATTACHMENT_HIDDEN: true for inline images embedded in an HTML
+    // signature/body (referenced via cid:) rather than real user attachments.
+    private const string PidTagAttachmentHidden = "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B";
+
+    private static IReadOnlyList<string> GetAttachmentNames(Outlook.MailItem mail)
+    {
+        var names = new List<string>();
+        foreach (Outlook.Attachment attachment in mail.Attachments)
+        {
+            if (IsHiddenInlineAttachment(attachment))
+                continue;
+
+            names.Add(attachment.DisplayName ?? attachment.FileName ?? string.Empty);
+        }
+
+        return names;
+    }
+
+    private static bool IsHiddenInlineAttachment(Outlook.Attachment attachment)
+    {
+        try
+        {
+            return attachment.PropertyAccessor.GetProperty(PidTagAttachmentHidden) is true;
+        }
+        catch (COMException)
+        {
+            return false;
+        }
     }
 
     private static IReadOnlyList<EmailMessage> GetThreadHistory(Outlook.MailItem mail)
