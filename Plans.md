@@ -1,0 +1,70 @@
+# Plans.md — Outlook 컨텍스트 기반 메신저 초안 아바타 (MVP)
+
+## 목표
+바탕화면 아바타를 클릭하거나 전역 단축키를 누르면, 현재 Outlook에서 보고 있는 메일(스레드)을 컨텍스트로 읽어 메신저 답장 초안을 LLM으로 생성하고, 아바타 위 작은 채팅 팝업에서 대화하며 다듬은 뒤 최종 문구를 복사해서 쓰는 도구.
+
+## 확인된 전제
+- Outlook: 클래식 데스크톱(Office16, Win32) — COM Object Model로 공식 API 접근 가능
+- 출력 방식: 자동 입력 아님. 채팅 팝업에서 확인/수정 후 사용자가 직접 복사
+- 플랫폼: Windows 전용 상주 앱
+
+## 스택 결정
+- .NET 8 + WPF (Outlook COM interop이 네이티브로 매끄럽고, 오버레이/트레이/단축키가 표준 기능)
+- `Microsoft.Office.Interop.Outlook` (NuGet)
+- Claude API (Anthropic Messages API) — `HttpClient` 직접 호출로 시작
+
+## 마일스톤
+
+### M0. 프로젝트 초기화
+- [ ] `EmailWrite.sln` + WPF 프로젝트(.NET 8) 생성
+- [ ] Interop.Outlook NuGet 추가, 빈 창 실행 확인
+- [ ] `.gitignore` (bin/obj/설정 파일 중 시크릿 제외)
+
+### M1. 바탕화면 아바타 오버레이
+- [ ] `WindowStyle=None`, `AllowsTransparency=True`, `Topmost=True` 창
+- [ ] 임시 아이콘/이미지 표시, 마우스 드래그로 위치 이동
+- [ ] 화면 우하단 기본 위치, 종료용 트레이 아이콘
+
+### M2. 트리거
+- [ ] 전역 단축키 등록 (기본 `Ctrl+Alt+E`, 충돌 시 에러 처리)
+- [ ] 아바타 클릭 → 채팅 팝업 토글
+- [ ] 단축키 → 채팅 팝업 토글 (동일 핸들러 재사용)
+
+### M3. Outlook 컨텍스트 리더
+- [ ] `ActiveInspector().CurrentItem` (열려있는 메일) 우선, 없으면 `ActiveExplorer().Selection` (목록 선택 항목)
+- [ ] 추출 필드: 제목, 발신자, 본문, 수신 시각
+- [ ] `MailItem.GetConversation()`으로 스레드 히스토리(최근 N개) 추가 추출
+- [ ] Outlook 미실행/선택된 메일 없음 예외 처리
+- [ ] 콘솔/디버그 출력으로 먼저 검증 (UI 연결 전 단독 테스트)
+- [ ] 보안 경고 팝업 발생 여부 실제 확인 (발신자 주소 접근 시 뜰 수 있음)
+
+### M4. 채팅 팝업 UI
+- [ ] 아바타 위쪽에 뜨는 borderless 작은 창
+- [ ] 메시지 리스트 + 입력창 + 전송 버튼
+- [ ] 메시지별 "복사" 버튼 (클립보드)
+- [ ] 팝업 오픈 시 Outlook 컨텍스트를 시스템 메시지로 주입 + 초안 자동 생성 1회 트리거
+
+### M5. LLM 연동 (Claude API)
+- [ ] API 키 관리 (환경변수, git 커밋 금지)
+- [ ] Anthropic Messages API 호출 (비스트리밍으로 시작)
+- [ ] 시스템 프롬프트: Outlook 컨텍스트 + "메신저 답장 초안 작성" 지시
+- [ ] 팝업 세션 내 멀티턴 대화 상태 유지
+
+### M6. 마무리
+- [ ] 클립보드 복사 동작 확인
+- [ ] 포커스 잃으면 팝업 자동 숨김(옵션)
+- [ ] API/Outlook 접근 실패 시 사용자에게 보이는 에러 메시지
+
+### M7. 통합 테스트
+- [ ] 실제 Outlook 메일 열어두고 End-to-End 시나리오
+- [ ] 단축키 경로 / 클릭 경로 둘 다 확인
+
+## MVP 범위 밖 (추후)
+- 타 메신저 앱 자동 입력 (UI Automation)
+- 새 Outlook / OWA(웹) 지원
+- 자동 시작, 설치 프로그램 패키징
+- 스트리밍 응답, 대화 히스토리 영구 저장
+
+## 진행 중 결정 필요
+- Anthropic API 키 발급/보관 방식
+- 아바타 이미지 에셋 (M1은 임시 아이콘으로 시작, 나중에 교체)
