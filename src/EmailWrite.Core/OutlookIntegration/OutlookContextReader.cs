@@ -6,6 +6,18 @@ namespace EmailWrite.Core.OutlookIntegration;
 // .NET (Core/5+) dropped Marshal.GetActiveObject (it's .NET Framework-only),
 // so attaching to an already-running Outlook instance has to go through
 // CLSIDFromProgID + the OLE GetActiveObject API directly.
+// Not present in System.Runtime.InteropServices.ComTypes on .NET (Core) —
+// only in .NET Framework — so declared here. Outlook's Inspector/Explorer
+// COM objects implement it, giving access to their underlying HWND.
+[ComImport]
+[Guid("00000114-0000-0000-C000-000000000046")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IOleWindow
+{
+    void GetWindow(out IntPtr phwnd);
+    void ContextSensitiveHelp([MarshalAs(UnmanagedType.Bool)] bool fEnterMode);
+}
+
 internal static class RunningComObject
 {
     [DllImport("ole32.dll")]
@@ -64,17 +76,71 @@ public static class OutlookContextReader
         return true;
     }
 
+    // If several mail windows (read/compose Inspectors, or Explorer list
+    // views with a selection) are open at once, Outlook's own
+    // ActiveInspector()/ActiveExplorer() can lag once focus has moved to a
+    // non-Outlook window (like this app's popup). So instead: collect every
+    // open window that has a mail item in play, and pick whichever one is
+    // highest in the real OS Z-order — i.e. was clicked/activated last.
     private static Outlook.MailItem? GetActiveMailItem(Outlook.Application app)
     {
-        var inspector = app.ActiveInspector();
-        if (inspector?.CurrentItem is Outlook.MailItem inspectorMail)
-            return inspectorMail;
+        var candidates = new Dictionary<IntPtr, Outlook.MailItem>();
 
-        var explorer = app.ActiveExplorer();
-        if (explorer?.Selection is { Count: > 0 } selection && selection[1] is Outlook.MailItem selectedMail)
-            return selectedMail;
+        foreach (Outlook.Inspector inspector in app.Inspectors)
+        {
+            if (inspector.CurrentItem is Outlook.MailItem mail)
+                TryAddCandidate(candidates, inspector, mail);
+        }
 
-        return null;
+        foreach (Outlook.Explorer explorer in app.Explorers)
+        {
+            if (explorer.Selection is { Count: > 0 } selection && selection[1] is Outlook.MailItem mail)
+                TryAddCandidate(candidates, explorer, mail);
+        }
+
+        if (candidates.Count == 0)
+            return null;
+
+        if (candidates.Count == 1)
+            return candidates.Values.First();
+
+        var topmostHwnd = WindowZOrder.FindTopmost(candidates.Keys);
+        if (topmostHwnd != IntPtr.Zero && candidates.TryGetValue(topmostHwnd, out var winner))
+            return winner;
+
+        // None of the HWND lookups panned out (unexpected) — fall back to
+        // Outlook's own idea of "active" rather than returning nothing.
+        if (app.ActiveInspector()?.CurrentItem is Outlook.MailItem activeInspectorMail)
+            return activeInspectorMail;
+
+        return app.ActiveExplorer()?.Selection is { Count: > 0 } activeSelection &&
+               activeSelection[1] is Outlook.MailItem activeSelectedMail
+            ? activeSelectedMail
+            : null;
+    }
+
+    private static void TryAddCandidate(Dictionary<IntPtr, Outlook.MailItem> candidates, object comWindow, Outlook.MailItem mail)
+    {
+        var hwnd = TryGetHwnd(comWindow);
+        if (hwnd != IntPtr.Zero)
+            candidates[hwnd] = mail;
+    }
+
+    private static IntPtr TryGetHwnd(object comWindow)
+    {
+        if (comWindow is IOleWindow oleWindow)
+        {
+            try
+            {
+                oleWindow.GetWindow(out var hwnd);
+                return hwnd;
+            }
+            catch (COMException)
+            {
+            }
+        }
+
+        return IntPtr.Zero;
     }
 
     private static EmailMessage ToEmailMessage(Outlook.MailItem mail)

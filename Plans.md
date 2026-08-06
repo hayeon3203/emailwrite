@@ -31,7 +31,7 @@
 - [x] 단축키 → 채팅 팝업 토글 (동일 핸들러 재사용)
 
 ### M3. Outlook 컨텍스트 리더 ✅
-- [x] `ActiveInspector().CurrentItem` (열려있는 메일) 우선, 없으면 `ActiveExplorer().Selection` (목록 선택 항목)
+- [x] 열려있는 모든 Inspector/Explorer를 후보로 모아 실제 OS Z-order상 가장 최근에 활성화된 창을 선택 (여러 메일 창이 동시에 떠있어도 마지막으로 클릭한 창 기준)
 - [x] 추출 필드: 제목, 발신자, 본문, 수신 시각, 첨부파일명(서명 인라인 이미지는 PR_ATTACHMENT_HIDDEN으로 필터링)
 - [x] `MailItem.GetConversation()`으로 스레드 히스토리(최근 N개) 추가 추출
 - [x] Outlook 미실행/선택된 메일 없음 예외 처리
