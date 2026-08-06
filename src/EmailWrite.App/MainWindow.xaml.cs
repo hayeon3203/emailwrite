@@ -2,8 +2,10 @@ using System.Drawing;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using EmailWrite.App.Interop;
 using Application = System.Windows.Application;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using Point = System.Windows.Point;
@@ -12,12 +14,15 @@ namespace EmailWrite.App;
 
 /// <summary>
 /// Desktop avatar overlay: idle-animated, draggable, always-on-top.
-/// Raises <see cref="AvatarClicked"/> for M2 to wire up the chat popup toggle.
+/// Click or the F9 global hotkey toggles the chat popup.
 /// </summary>
 public partial class MainWindow : Window
 {
     private const double EdgeMargin = 24;
     private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(150);
+
+    private const int HotkeyId = 0x0900;
+    private const uint VK_F9 = 0x78;
 
     private readonly string _framesDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Avatar", "Frames");
 
@@ -27,6 +32,7 @@ public partial class MainWindow : Window
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private Point _mouseDownPosition;
     private bool _isDragging;
+    private ChatPopupWindow? _chatPopup;
 
     public event EventHandler? AvatarClicked;
 
@@ -35,6 +41,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         Loaded += OnLoaded;
         Closed += OnClosed;
+        AvatarClicked += (_, _) => ToggleChatPopup();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -43,6 +50,57 @@ public partial class MainWindow : Window
         LoadFrames();
         StartIdleAnimation();
         SetupTrayIcon();
+        RegisterGlobalHotkey();
+    }
+
+    private void RegisterGlobalHotkey()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
+
+        if (!NativeMethods.RegisterHotKey(hwnd, HotkeyId, 0, VK_F9))
+        {
+            _trayIcon?.ShowBalloonTip(
+                3000,
+                "EmailWrite",
+                "F9 단축키가 다른 프로그램에서 이미 사용 중이라 등록하지 못했습니다.",
+                System.Windows.Forms.ToolTipIcon.Warning);
+        }
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == NativeMethods.WM_HOTKEY && wParam.ToInt32() == HotkeyId)
+        {
+            ToggleChatPopup();
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void ToggleChatPopup()
+    {
+        if (_chatPopup is { IsVisible: true })
+        {
+            _chatPopup.Hide();
+            return;
+        }
+
+        _chatPopup ??= new ChatPopupWindow();
+        PositionChatPopupAboveAvatar();
+        _chatPopup.Show();
+        _chatPopup.Activate();
+    }
+
+    private void PositionChatPopupAboveAvatar()
+    {
+        if (_chatPopup == null)
+            return;
+
+        const double gap = 12;
+        _chatPopup.Left = Left + (Width / 2) - (_chatPopup.Width / 2);
+        _chatPopup.Top = Top - _chatPopup.Height - gap;
     }
 
     private void PositionAtBottomRight()
@@ -139,6 +197,7 @@ public partial class MainWindow : Window
 
     private void OnClosed(object? sender, EventArgs e)
     {
+        NativeMethods.UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId);
         _animationTimer?.Stop();
         if (_trayIcon != null)
         {

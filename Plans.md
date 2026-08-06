@@ -15,20 +15,20 @@
 
 ## 마일스톤
 
-### M0. 프로젝트 초기화
-- [ ] `EmailWrite.sln` + WPF 프로젝트(.NET 8) 생성
-- [ ] Interop.Outlook NuGet 추가, 빈 창 실행 확인
-- [ ] `.gitignore` (bin/obj/설정 파일 중 시크릿 제외)
+### M0. 프로젝트 초기화 ✅
+- [x] `EmailWrite.sln` + WPF 프로젝트(.NET 8) 생성
+- [x] Interop.Outlook NuGet 추가, 빈 창 실행 확인
+- [x] `.gitignore` (bin/obj/설정 파일 중 시크릿 제외)
 
-### M1. 바탕화면 아바타 오버레이
-- [ ] `WindowStyle=None`, `AllowsTransparency=True`, `Topmost=True` 창
-- [ ] 임시 아이콘/이미지 표시, 마우스 드래그로 위치 이동
-- [ ] 화면 우하단 기본 위치, 종료용 트레이 아이콘
+### M1. 바탕화면 아바타 오버레이 ✅
+- [x] `WindowStyle=None`, `AllowsTransparency=True`, `Topmost=True` 창
+- [x] 이미지 표시(픽셀 아바타 스프라이트, 아이들 애니메이션), 마우스 드래그로 위치 이동
+- [x] 화면 우하단 기본 위치, 종료용 트레이 아이콘
 
-### M2. 트리거
-- [ ] 전역 단축키 등록 (기본 `Ctrl+Alt+E`, 충돌 시 에러 처리)
-- [ ] 아바타 클릭 → 채팅 팝업 토글
-- [ ] 단축키 → 채팅 팝업 토글 (동일 핸들러 재사용)
+### M2. 트리거 ✅
+- [x] 전역 단축키 등록 (기본 `F9`, 충돌 시 트레이 풍선 알림으로 에러 처리)
+- [x] 아바타 클릭 → 채팅 팝업 토글 (플레이스홀더 팝업, 실제 UI는 M4)
+- [x] 단축키 → 채팅 팝업 토글 (동일 핸들러 재사용)
 
 ### M3. Outlook 컨텍스트 리더
 - [ ] `ActiveInspector().CurrentItem` (열려있는 메일) 우선, 없으면 `ActiveExplorer().Selection` (목록 선택 항목)
