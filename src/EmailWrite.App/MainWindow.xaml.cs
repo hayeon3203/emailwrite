@@ -1,23 +1,149 @@
-﻿using System.Text;
+using System.Drawing;
+using System.IO;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+using System.Windows.Threading;
+using Application = System.Windows.Application;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using Point = System.Windows.Point;
 
 namespace EmailWrite.App;
 
 /// <summary>
-/// Interaction logic for MainWindow.xaml
+/// Desktop avatar overlay: idle-animated, draggable, always-on-top.
+/// Raises <see cref="AvatarClicked"/> for M2 to wire up the chat popup toggle.
 /// </summary>
 public partial class MainWindow : Window
 {
+    private const double EdgeMargin = 24;
+    private static readonly TimeSpan FrameInterval = TimeSpan.FromMilliseconds(150);
+
+    private readonly string _framesDir = Path.Combine(AppContext.BaseDirectory, "Assets", "Avatar", "Frames");
+
+    private BitmapImage[] _frames = [];
+    private int _frameIndex;
+    private DispatcherTimer? _animationTimer;
+    private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private Point _mouseDownPosition;
+    private bool _isDragging;
+
+    public event EventHandler? AvatarClicked;
+
     public MainWindow()
     {
         InitializeComponent();
+        Loaded += OnLoaded;
+        Closed += OnClosed;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        PositionAtBottomRight();
+        LoadFrames();
+        StartIdleAnimation();
+        SetupTrayIcon();
+    }
+
+    private void PositionAtBottomRight()
+    {
+        var workArea = SystemParameters.WorkArea;
+        Left = workArea.Right - Width - EdgeMargin;
+        Top = workArea.Bottom - Height - EdgeMargin;
+    }
+
+    private void LoadFrames()
+    {
+        if (!Directory.Exists(_framesDir))
+            return;
+
+        var files = Directory.GetFiles(_framesDir, "frame_*.png");
+        Array.Sort(files, StringComparer.Ordinal);
+        _frames = Array.ConvertAll(files, f => new BitmapImage(new Uri(f, UriKind.Absolute)));
+
+        if (_frames.Length > 0)
+            AvatarImage.Source = _frames[0];
+    }
+
+    private void StartIdleAnimation()
+    {
+        if (_frames.Length == 0)
+            return;
+
+        _animationTimer = new DispatcherTimer { Interval = FrameInterval };
+        _animationTimer.Tick += (_, _) =>
+        {
+            _frameIndex = (_frameIndex + 1) % _frames.Length;
+            AvatarImage.Source = _frames[_frameIndex];
+        };
+        _animationTimer.Start();
+    }
+
+    private void SetupTrayIcon()
+    {
+        var iconPath = Path.Combine(_framesDir, "frame_00.png");
+        System.Drawing.Icon trayIcon;
+        if (File.Exists(iconPath))
+        {
+            using var bitmap = new Bitmap(iconPath);
+            trayIcon = System.Drawing.Icon.FromHandle(bitmap.GetHicon());
+        }
+        else
+        {
+            trayIcon = SystemIcons.Application;
+        }
+
+        var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+        contextMenu.Items.Add("종료", null, (_, _) => Application.Current.Shutdown());
+
+        _trayIcon = new System.Windows.Forms.NotifyIcon
+        {
+            Icon = trayIcon,
+            Visible = true,
+            Text = "EmailWrite Avatar",
+            ContextMenuStrip = contextMenu
+        };
+    }
+
+    // MouseLeftButtonDown/MouseMove/MouseLeftButtonUp together distinguish a
+    // click (no movement) from a drag, since DragMove() would otherwise
+    // swallow the click that M2 needs to open the chat popup.
+    private void AvatarImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _mouseDownPosition = e.GetPosition(this);
+        _isDragging = false;
+        AvatarImage.CaptureMouse();
+    }
+
+    private void AvatarImage_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _isDragging)
+            return;
+
+        var delta = e.GetPosition(this) - _mouseDownPosition;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        _isDragging = true;
+        AvatarImage.ReleaseMouseCapture();
+        DragMove();
+    }
+
+    private void AvatarImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        AvatarImage.ReleaseMouseCapture();
+        if (!_isDragging)
+            AvatarClicked?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _animationTimer?.Stop();
+        if (_trayIcon != null)
+        {
+            _trayIcon.Visible = false;
+            _trayIcon.Dispose();
+        }
     }
 }
