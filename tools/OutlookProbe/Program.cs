@@ -25,6 +25,7 @@ internal static class Program
         foreach (var msg in context.ThreadHistory)
         {
             Console.WriteLine($"- [{msg.ReceivedTime}] {msg.SenderName}: {msg.Subject} (첨부: {FormatAttachments(msg.AttachmentNames)})");
+            Console.WriteLine($"    본문 (앞 100자): {Truncate(msg.Body, 100)}");
         }
     }
 
