@@ -44,11 +44,11 @@
 - [x] 메시지별 "복사" 버튼 (클립보드)
 - [x] 팝업 오픈 시 Outlook 컨텍스트를 시스템 메시지로 주입 + 초안 자동 생성 1회 트리거 (`IDraftGenerator` — M5 전까지는 `PlaceholderDraftGenerator`가 자리만 채움)
 
-### M5. LLM 연동 (Claude API)
-- [ ] API 키 관리 (환경변수, git 커밋 금지)
-- [ ] Anthropic Messages API 호출 (비스트리밍으로 시작)
-- [ ] 시스템 프롬프트: Outlook 컨텍스트 + "메신저 답장 초안 작성" 지시
-- [ ] 팝업 세션 내 멀티턴 대화 상태 유지
+### M5. LLM 연동 (Claude API) ✅
+- [x] API 키 관리 (환경변수 `ANTHROPIC_API_KEY`, git 커밋 금지)
+- [x] Anthropic Messages API 호출 (비스트리밍, `claude-haiku-4-5`) — 공식 `Anthropic` C# SDK 사용
+- [x] 시스템 프롬프트: Outlook 컨텍스트(현재 메일 + 스레드 히스토리) + "메신저 답장 초안 작성" 지시
+- [x] 팝업 세션 내 멀티턴 대화 상태 유지 (`ChatPopupWindow.Messages`를 매 요청마다 전체 전달)
 
 ### M6. 마무리
 - [ ] 클립보드 복사 동작 확인

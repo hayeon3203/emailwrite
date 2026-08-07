@@ -87,7 +87,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        _chatPopup ??= new ChatPopupWindow();
+        _chatPopup ??= new ChatPopupWindow(new EmailWrite.Core.Drafting.ClaudeDraftGenerator());
         PositionChatPopupAboveAvatar();
         _chatPopup.Show();
         _chatPopup.Activate();
