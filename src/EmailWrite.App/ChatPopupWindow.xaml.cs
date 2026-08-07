@@ -1,9 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Threading;
+using EmailWrite.App.Interop;
 using EmailWrite.Core.Drafting;
 using EmailWrite.Core.OutlookIntegration;
+using Button = System.Windows.Controls.Button;
 using Clipboard = System.Windows.Clipboard;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
@@ -32,6 +36,21 @@ public partial class ChatPopupWindow : Window
         _draftGenerator = draftGenerator;
         InitializeComponent();
         DataContext = this;
+        Deactivated += ChatPopupWindow_Deactivated;
+    }
+
+    /// <summary>
+    /// Auto-hides the popup when it loses focus (e.g. the user clicks elsewhere on
+    /// screen), except when the avatar itself was clicked — that click's own
+    /// MouseLeftButtonUp handler already owns the show/hide toggle, and hiding here
+    /// too would race it into immediately reopening.
+    /// </summary>
+    private void ChatPopupWindow_Deactivated(object? sender, EventArgs e)
+    {
+        if (Owner != null && NativeMethods.GetForegroundWindow() == new WindowInteropHelper(Owner).Handle)
+            return;
+
+        Hide();
     }
 
     /// <summary>
@@ -52,11 +71,7 @@ public partial class ChatPopupWindow : Window
         string? error;
         try
         {
-            (_emailContext, error) = await Task.Run(() =>
-            {
-                OutlookContextReader.TryGetCurrentEmailContext(out var ctx, out var err);
-                return (ctx, err);
-            });
+            (_emailContext, error) = await ReadOutlookContextAsync();
         }
         catch (Exception ex)
         {
@@ -74,6 +89,35 @@ public partial class ChatPopupWindow : Window
         await GenerateAndAppendDraftAsync();
     }
 
+    /// <summary>
+    /// Outlook's COM objects are STA-only — calling them from a ThreadPool thread
+    /// (which defaults to MTA) makes deep calls like IOleWindow.GetWindow() throw
+    /// COMException, which <see cref="OutlookContextReader"/> swallows internally,
+    /// silently producing "no mail found" even with a mail open. So this spins up
+    /// a dedicated STA thread instead of using Task.Run, keeping the COM round-trip
+    /// off the UI thread without breaking apartment affinity.
+    /// </summary>
+    private static Task<(EmailContext? Context, string? Error)> ReadOutlookContextAsync()
+    {
+        var tcs = new TaskCompletionSource<(EmailContext?, string?)>();
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                OutlookContextReader.TryGetCurrentEmailContext(out var ctx, out var err);
+                tcs.SetResult((ctx, err));
+            }
+            catch (Exception ex)
+            {
+                tcs.SetException(ex);
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
+        return tcs.Task;
+    }
+
     private async Task GenerateAndAppendDraftAsync()
     {
         TypingIndicator.Visibility = Visibility.Visible;
@@ -83,6 +127,14 @@ public partial class ChatPopupWindow : Window
             var conversation = Messages.Select(m => m.Message).ToList();
             var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation);
             Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft)));
+        }
+        catch (Exception ex)
+        {
+            // IDraftGenerator implementations are expected to catch their own errors and
+            // return a user-facing message string; this is a backstop for anything that
+            // still throws (e.g. an unexpected SDK exception) so it surfaces in the chat
+            // instead of taking down the popup.
+            Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant($"초안 생성 중 오류가 발생했어요: {ex.Message}")));
         }
         finally
         {
@@ -115,10 +167,27 @@ public partial class ChatPopupWindow : Window
         await GenerateAndAppendDraftAsync();
     }
 
-    private void CopyMessage_Click(object sender, RoutedEventArgs e)
+    private async void CopyMessage_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: string text })
+        if (sender is not Button { Tag: string text } button)
+            return;
+
+        try
+        {
             Clipboard.SetText(text);
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Another process is holding the clipboard open (common on Windows); ignore, button just won't flip to "복사됨".
+            return;
+        }
+
+        var original = button.Content;
+        button.Content = "복사됨";
+        button.IsEnabled = false;
+        await Task.Delay(1000);
+        button.Content = original;
+        button.IsEnabled = true;
     }
 
     private void ScrollToBottom()
