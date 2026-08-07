@@ -14,6 +14,9 @@
       <Link>Assets\Avatar\Frames\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Resource Include="..\..\avatar\daol-avatar-face.png">
+      <Link>Assets\Avatar\daol-avatar-face.png</Link>
+    </Resource>
   </ItemGroup>
 
   <ItemGroup>

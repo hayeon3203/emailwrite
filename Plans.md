@@ -38,11 +38,11 @@
 - [x] 콘솔/디버그 출력으로 먼저 검증 (`tools/OutlookProbe`, UI 연결 전 단독 테스트)
 - [x] 보안 경고 팝업 발생 여부 실제 확인 — SenderName만 사용(SenderEmailAddress 미접근)해서 실제 실행 시 팝업 안 뜸
 
-### M4. 채팅 팝업 UI
-- [ ] 아바타 위쪽에 뜨는 borderless 작은 창
-- [ ] 메시지 리스트 + 입력창 + 전송 버튼
-- [ ] 메시지별 "복사" 버튼 (클립보드)
-- [ ] 팝업 오픈 시 Outlook 컨텍스트를 시스템 메시지로 주입 + 초안 자동 생성 1회 트리거
+### M4. 채팅 팝업 UI ✅
+- [x] 아바타 위쪽에 뜨는 borderless 작은 창
+- [x] 메시지 리스트 + 입력창 + 전송 버튼
+- [x] 메시지별 "복사" 버튼 (클립보드)
+- [x] 팝업 오픈 시 Outlook 컨텍스트를 시스템 메시지로 주입 + 초안 자동 생성 1회 트리거 (`IDraftGenerator` — M5 전까지는 `PlaceholderDraftGenerator`가 자리만 채움)
 
 ### M5. LLM 연동 (Claude API)
 - [ ] API 키 관리 (환경변수, git 커밋 금지)

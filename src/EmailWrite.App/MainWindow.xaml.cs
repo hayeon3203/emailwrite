@@ -91,6 +91,8 @@ public partial class MainWindow : Window
         PositionChatPopupAboveAvatar();
         _chatPopup.Show();
         _chatPopup.Activate();
+
+        _ = _chatPopup.OpenAsync();
     }
 
     private void PositionChatPopupAboveAvatar()
