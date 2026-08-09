@@ -1,5 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <!-- "DraftProbe.exe selftest" exercises DraftPromptBuilder's body trimming directly. -->
+    <InternalsVisibleTo Include="DraftProbe" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

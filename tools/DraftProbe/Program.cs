@@ -11,7 +11,55 @@ using EmailWrite.Core.OutlookIntegration;
 //
 // llama.cpp writes a few hundred lines of load/repack chatter to stderr; pipe it away with
 //   ... 2>$null
+// Pass --outlook to run against the mail actually open in Outlook instead of the fake one.
+// The multi-turn quality bugs (wrong self-identification, email register creeping back in)
+// only reproduce on real mail, whose body carries quoted headers and a signature block.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
+
+if (args.Contains("--selftest"))
+{
+    // Real Outlook body: content, signature, then the quoted original with its headers.
+    const string body =
+        "몬드리안에서 영문버전 만들어주기로 했습니다.\n참고 부탁드립니다.\n\n김정희 드림\n" +
+        "________________________________\n" +
+        "보낸 사람: 박선영 <sunyoung.park@daolts.co.kr>\n받는 사람: 김정희\n\n원본 메일 본문";
+
+    // Not Debug.Assert: that compiles away outside DEBUG builds, and a self-check that prints
+    // "OK" without having checked anything is worse than no self-check.
+    static void Check(bool condition, string message)
+    {
+        if (!condition) throw new Exception($"selftest 실패: {message}");
+    }
+
+    var stripped = DraftPromptBuilder.StripQuotedReply(body);
+    Check(stripped.EndsWith("김정희 드림"), $"인용부가 안 잘림: {stripped}");
+    Check(!stripped.Contains("박선영"), "인용된 헤더의 다른 참여자 이름이 남아있음");
+
+    // No marker at all -> body must survive untouched.
+    Check(DraftPromptBuilder.StripQuotedReply("짧은 본문") == "짧은 본문", "마커 없는 본문이 잘림");
+
+    // The earliest marker wins, even when a later one appears first in the marker list.
+    Check(DraftPromptBuilder.StripQuotedReply("본문\nFrom: a\n________________________________\n") == "본문",
+        "가장 앞선 마커에서 자르지 않음");
+
+    Console.WriteLine("selftest OK");
+    return;
+}
+
+var useOutlook = args.Contains("--outlook");
+
+// The second-turn request decides which failure shows up: "짧게" mostly behaves, while
+// "친근하게" is what made the model prepend a preamble and slip back into email register.
+var askIndex = Array.IndexOf(args, "--ask");
+var secondTurnAsk = askIndex >= 0 && askIndex + 1 < args.Length
+    ? args[askIndex + 1]
+    : "좀 더 짧고 캐주얼하게 바꿔줘.";
+
+// --draft pins the first-turn draft instead of generating one. Sampling makes turn 1 vary
+// wildly, and the multi-turn failure only shows up when that draft came out terse ("네,
+// 알겠습니다.") — with nothing to revise, the model re-answers the mail from scratch.
+var draftIndex = Array.IndexOf(args, "--draft");
+var pinnedDraft = draftIndex >= 0 && draftIndex + 1 < args.Length ? args[draftIndex + 1] : null;
 
 var context = new EmailContext(
     new EmailMessage(
@@ -30,22 +78,61 @@ var context = new EmailContext(
             Array.Empty<string>()),
     });
 
+if (useOutlook)
+{
+    // Outlook's COM objects are STA-only, and top-level statements can't carry [STAThread].
+    EmailContext? live = null;
+    string? error = null;
+    var reader = new Thread(() => OutlookContextReader.TryGetCurrentEmailContext(out live, out error));
+    reader.SetApartmentState(ApartmentState.STA);
+    reader.Start();
+    reader.Join();
+
+    if (live == null)
+    {
+        Console.WriteLine($"Outlook 컨텍스트 읽기 실패: {error}");
+        return;
+    }
+
+    context = live;
+    Console.WriteLine($"실제 Outlook 메일 사용: \"{context.Current.Subject}\" ({context.Current.SenderName}, 본문 {context.Current.Body.Length}자)");
+    if (args.Contains("--dump-body"))
+    {
+        // Only the head of the body survives DraftPromptBuilder's cap, so this is what the
+        // model actually sees — including any quoted "받는 사람:" header it might mistake
+        // for the user's own name.
+        var forPrompt = DraftPromptBuilder.StripQuotedReply(context.Current.Body);
+        Console.WriteLine($"--- 프롬프트에 들어가는 본문 ({context.Current.Body.Length}자 -> {forPrompt.Length}자) ---");
+        Console.WriteLine(forPrompt[..Math.Min(1200, forPrompt.Length)]);
+        Console.WriteLine("--- 끝 ---");
+    }
+}
+
 Console.WriteLine($"모델: {Environment.GetEnvironmentVariable("EMAILWRITE_MODEL") ?? "(기본값)"}\n");
 
 using var generator = new LocalDraftGenerator();
 
 var sw = Stopwatch.StartNew();
 Console.WriteLine("--- 1턴: 최초 초안 ---");
-var draft = await generator.GenerateDraftAsync(context, Array.Empty<ChatMessage>());
-Console.WriteLine(draft);
-Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s — 모델 로드 포함]");
+string draft;
+if (pinnedDraft != null)
+{
+    draft = pinnedDraft;
+    Console.WriteLine($"{draft}  [--draft로 고정, 생성 안 함]");
+}
+else
+{
+    draft = await generator.GenerateDraftAsync(context, Array.Empty<ChatMessage>());
+    Console.WriteLine(draft);
+    Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s — 모델 로드 포함]");
+}
 
 // Second turn checks that the model actually revises its own draft rather than
 // re-answering the mail from scratch.
 var conversation = new List<ChatMessage>
 {
     ChatMessage.FromAssistant(draft),
-    ChatMessage.FromUser("좀 더 짧고 캐주얼하게 바꿔줘."),
+    ChatMessage.FromUser(secondTurnAsk),
 };
 
 sw.Restart();

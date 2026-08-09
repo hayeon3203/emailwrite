@@ -19,31 +19,63 @@ internal static class DraftPromptBuilder
     private const int MaxCurrentBodyChars = 1200;
     private const int MaxHistoryBodyChars = 300;
 
+    /// <summary>
+    /// Where Outlook starts quoting the message being replied to. Everything past this point is
+    /// the older mail repeated verbatim, headers and all — and those headers are actively harmful,
+    /// not merely wasteful: the model read "보낸 사람: 박선영" out of a quoted block and signed the
+    /// draft as 박선영, who was another participant in the thread and not the user at all.
+    ///
+    /// Declared ahead of <see cref="ExampleTurns"/> on purpose: that field is initialised by
+    /// calling into BuildContextTurn, and static initialisers run in declaration order, so
+    /// putting this below it leaves the array null at exactly the moment it gets read.
+    /// </summary>
+    private static readonly string[] QuotedReplyMarkers =
+    [
+        "\n________________________________",   // Outlook's own separator above a quoted reply
+        "\n-----Original Message-----",
+        "\n-----원본 메시지-----",
+        "\n보낸 사람:",
+        "\nFrom:",
+    ];
+
     public const string SystemPrompt = """
         당신은 사용자가 Outlook에서 받은 메일에 대해, 메신저(카카오톡/슬랙 등)로 보낼 답장 초안을 작성하는 어시스턴트입니다.
         초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
         이메일 형식(인사말, 서명 등)이 아니라 짧고 자연스러운 메신저 말투로 작성하세요. 2~3문장이면 충분합니다.
         초안은 반드시 원본 메일과 같은 언어로 작성하세요. 한국어 메일에는 한국어로 답하세요.
-        사용자가 이후 대화에서 톤이나 내용 수정을 요청하면 그에 맞춰 초안을 다듬어 다시 제시하세요.
+        사용자가 이후 대화에서 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 출력하세요.
         설명이나 머리말 없이 답장 본문만 출력하세요.
         """;
 
     /// <summary>
-    /// A worked example, replayed as a completed user/assistant exchange ahead of the real
-    /// one. Small local models need to *see* a correct draft — but only as a finished prior
-    /// turn: the same example pasted into the system prompt gets copied out verbatim as the
-    /// answer to the actual mail.
+    /// A worked exchange, replayed as completed turns ahead of the real one. Small local models
+    /// need to *see* a correct draft — but only as finished prior turns: the same example pasted
+    /// into the system prompt gets copied out verbatim as the answer to the actual mail.
+    ///
+    /// It runs to two rounds on purpose. With only the first pair, the model had never seen what
+    /// a revision request is supposed to produce and treated it as conversation — answering "네,
+    /// 물론이죠." instead of redrafting, or re-answering the mail from scratch in full email
+    /// register, signature and all (and signing as whichever name it found in the quoted headers).
+    /// The second pair shows the shape: rewrite the whole draft, no preamble, no acknowledgement.
     /// </summary>
-    public static readonly (string User, string Assistant) Example = (
-        BuildContextTurn(new EmailContext(
+    public static readonly IReadOnlyList<(ChatRole Role, string Text)> ExampleTurns = new[]
+    {
+        (ChatRole.User, BuildContextTurn(new EmailContext(
             new EmailMessage(
                 "계약서 검토 요청",
                 "박지훈",
                 "첨부한 계약서 검토 부탁드립니다. 수요일까지 회신 주세요.",
                 new DateTime(2000, 1, 1),
                 new[] { "계약서.pdf" }),
-            Array.Empty<EmailMessage>())),
-        "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다.");
+            Array.Empty<EmailMessage>()))),
+        (ChatRole.Assistant, "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다."),
+        (ChatRole.User, "좀 더 친근한 말투로 바꿔줘."),
+        // Rewritten end to end, not just at the sentence endings: with a timid example — one
+        // verb softened, everything else identical — the model matched that degree of change and
+        // handed back the draft verbatim on most revision turns. The example has to show how far
+        // "친근하게" is meant to move the text.
+        (ChatRole.Assistant, "계약서 봤어요! 내일까지 훑어보고 의견 정리해서 드릴게요. 수요일 전에는 꼭 회신 드릴게요."),
+    };
 
     /// <summary>
     /// The opening user turn: the Outlook context as quoted data, then the instruction.
@@ -79,10 +111,25 @@ internal static class DraftPromptBuilder
         }
 
         sb.AppendLine("- 본문:");
-        sb.AppendLine(Truncate(message.Body, maxBodyChars));
+        sb.AppendLine(Truncate(StripQuotedReply(message.Body), maxBodyChars));
         sb.AppendLine();
     }
 
     private static string Truncate(string body, int maxChars) =>
         body.Length <= maxChars ? body : body[..maxChars] + "\n...(이하 생략)";
+
+    internal static string StripQuotedReply(string body)
+    {
+        var cut = body.Length;
+        foreach (var marker in QuotedReplyMarkers)
+        {
+            var index = body.IndexOf(marker, StringComparison.Ordinal);
+            if (index >= 0 && index < cut)
+            {
+                cut = index;
+            }
+        }
+
+        return body[..cut].TrimEnd();
+    }
 }

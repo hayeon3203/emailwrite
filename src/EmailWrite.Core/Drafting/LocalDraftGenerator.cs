@@ -191,8 +191,11 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         var isQwen = _modelPath.Contains("qwen", StringComparison.OrdinalIgnoreCase);
         var template = new LLamaTemplate(_weights!) { AddAssistant = true };
         template.Add("system", DraftPromptBuilder.SystemPrompt + (isQwen ? "\n/no_think" : ""));
-        template.Add("user", DraftPromptBuilder.Example.User);
-        template.Add("assistant", DraftPromptBuilder.Example.Assistant);
+        foreach (var (role, text) in DraftPromptBuilder.ExampleTurns)
+        {
+            template.Add(role == ChatRole.User ? "user" : "assistant", text);
+        }
+
         template.Add("user", DraftPromptBuilder.BuildContextTurn(emailContext));
 
         foreach (var message in conversation)

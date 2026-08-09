@@ -40,12 +40,18 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
 
         // The Outlook context is the opening user turn, so the conversation always starts
         // with a user message and stays correctly alternating on every follow-up turn.
-        var messages = new List<MessageParam>
+        var messages = DraftPromptBuilder.ExampleTurns
+            .Select(t => new MessageParam
+            {
+                Role = t.Role == ChatRole.User ? Role.User : Role.Assistant,
+                Content = t.Text,
+            })
+            .ToList();
+        messages.Add(new MessageParam
         {
-            new() { Role = Role.User, Content = DraftPromptBuilder.Example.User },
-            new() { Role = Role.Assistant, Content = DraftPromptBuilder.Example.Assistant },
-            new() { Role = Role.User, Content = DraftPromptBuilder.BuildContextTurn(emailContext) },
-        };
+            Role = Role.User,
+            Content = DraftPromptBuilder.BuildContextTurn(emailContext),
+        });
         messages.AddRange(conversation.Select(m => new MessageParam
         {
             Role = m.Role == ChatRole.User ? Role.User : Role.Assistant,
