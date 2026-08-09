@@ -39,31 +39,25 @@ internal static class DraftPromptBuilder
     ];
 
     public const string SystemPrompt = """
-        당신은 사용자가 Outlook에서 받은 메일에 답장하는 것을 돕는 어시스턴트입니다. 사용자와 한국어로 대화하면서, 보낼 답장을 함께 만들어갑니다.
-
-        답장을 쓸 준비가 되면, 답장 본문만 <draft>와 </draft> 사이에 넣어 출력하세요. 그 밖의 말은 붙이지 마세요.
-        아직 쓸 수 없으면 초안을 지어내지 말고, 부족한 것 하나만 짧게 되물으세요. 되물을 때는 <draft>를 쓰지 마세요.
-        되물어야 하는 경우는 답장의 내용이 달라지는 것이 빠졌을 때뿐입니다. 예: 승낙인지 거절인지, 언제까지 가능한지, 숫자나 금액.        사용자가 담을 내용을 이미 알려줬다면 되묻지 말고 바로 <draft>를 쓰세요.
-
-        초안 작성 규칙:
-        - 초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
-        - 사용자가 알려준 내용만 문장으로 옮기세요. 거기 없는 약속·일정·수치는 절대 지어내지 마세요.
-        - 이메일 형식(인사말, 서명 등)이 아니라 짧고 자연스러운 메신저 말투로 쓰세요. 2~3문장이면 충분합니다.
-        - 반드시 원본 메일과 같은 언어로 쓰세요. 한국어 메일에는 한국어로 답하세요.
-        - 사용자가 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 <draft>로 감싸 출력하세요.
+        당신은 사용자가 Outlook에서 받은 메일에 대해, 메신저(카카오톡/슬랙 등)로 보낼 답장 초안을 작성하는 어시스턴트입니다.
+        초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
+        사용자가 "답장에 담을 내용"을 알려주면, 그 내용만 자연스러운 문장으로 옮기세요. 거기 없는 약속·일정·수치는 절대 지어내지 마세요.
+        이메일 형식(인사말, 서명 등)이 아니라 짧고 자연스러운 메신저 말투로 작성하세요. 2~3문장이면 충분합니다.
+        초안은 반드시 원본 메일과 같은 언어로 작성하세요. 한국어 메일에는 한국어로 답하세요.
+        사용자가 이후 대화에서 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 출력하세요.
+        설명이나 머리말 없이 답장 본문만 출력하세요.
         """;
 
     /// <summary>
     /// A worked exchange, replayed as completed turns ahead of the real one. Small local models
-    /// need to *see* the behaviour — but only as finished prior turns: the same example pasted
+    /// need to *see* a correct draft — but only as finished prior turns: the same example pasted
     /// into the system prompt gets copied out verbatim as the answer to the actual mail.
     ///
-    /// One conversation covering all three moves, which is cheaper than three examples: ask when
-    /// something that changes the reply is missing, wrap the draft in the tag once it isn't, and
-    /// on a revision request redraft rather than acknowledge. That last round is there because
-    /// without it the model treated "친근하게 바꿔줘" as conversation and answered "네, 물론이죠.",
-    /// and it rewrites end to end because a timid example — one softened verb — taught it to hand
-    /// the draft back unchanged.
+    /// It runs to two rounds on purpose. With only the first pair, the model had never seen what
+    /// a revision request is supposed to produce and treated it as conversation — answering "네,
+    /// 물론이죠." instead of redrafting, or re-answering the mail from scratch in full email
+    /// register, signature and all (and signing as whichever name it found in the quoted headers).
+    /// The second pair shows the shape: rewrite the whole draft, no preamble, no acknowledgement.
     /// </summary>
     public static readonly IReadOnlyList<(ChatRole Role, string Text)> ExampleTurns = new[]
     {
@@ -76,13 +70,16 @@ internal static class DraftPromptBuilder
                     new DateTime(2000, 1, 1),
                     new[] { "계약서.pdf" }),
                 Array.Empty<EmailMessage>()),
-            // The intent is deliberately vague on timing, so the example opens by asking for it.
-            "검토해준다고 답장 써줘")),
-        (ChatRole.Assistant, "언제까지 검토해서 드릴 수 있을까요?"),
-        (ChatRole.User, "내일까지 볼 수 있어. 회신은 수요일 전에."),
-        (ChatRole.Assistant, "<draft>계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다.</draft>"),
+            // The example carries an intent too, so the model sees that the draft is built from
+            // what the user asked for — not invented from the mail alone.
+            "내일까지 검토해서 의견 정리해서 준다고, 수요일 전에는 회신한다고")),
+        (ChatRole.Assistant, "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다."),
         (ChatRole.User, "좀 더 친근한 말투로 바꿔줘."),
-        (ChatRole.Assistant, "<draft>계약서 봤어요! 내일까지 훑어보고 의견 정리해서 드릴게요. 수요일 전에는 꼭 회신 드릴게요.</draft>"),
+        // Rewritten end to end, not just at the sentence endings: with a timid example — one
+        // verb softened, everything else identical — the model matched that degree of change and
+        // handed back the draft verbatim on most revision turns. The example has to show how far
+        // "친근하게" is meant to move the text.
+        (ChatRole.Assistant, "계약서 봤어요! 내일까지 훑어보고 의견 정리해서 드릴게요. 수요일 전에는 꼭 회신 드릴게요."),
     };
 
     /// <summary>

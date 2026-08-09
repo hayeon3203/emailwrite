@@ -46,16 +46,6 @@ if (args.Contains("--selftest"))
     Check(LocalDraftGenerator.StripChatMarkers("초안입니다.") == "초안입니다.", "토큰 없는 출력이 잘림");
     Check(LocalDraftGenerator.StripChatMarkers("초안<|im_start|>assistant\n덧붙임") == "초안", "두 번째 마커에서 안 잘림");
 
-    var drafted = DraftResponse.Parse("<draft>계약서 봤어요.</draft>");
-    Check(drafted.IsDraft && drafted.Text == "계약서 봤어요.", $"초안 태그 파싱 실패: {drafted.Text}");
-
-    var asked = DraftResponse.Parse("언제까지 가능하세요?");
-    Check(!asked.IsDraft && asked.Text == "언제까지 가능하세요?", "되묻는 턴을 초안으로 잘못 봄");
-
-    // Token limit can cut generation off before the closing tag.
-    var truncated = DraftResponse.Parse("<draft>계약서 봤어요. 내일까지");
-    Check(truncated.IsDraft && truncated.Text == "계약서 봤어요. 내일까지", "닫는 태그 없는 초안을 못 건짐");
-
     Console.WriteLine("selftest OK");
     return;
 }
@@ -146,7 +136,7 @@ if (pinnedDraft != null)
 else
 {
     draft = await generator.GenerateDraftAsync(context, conversation);
-    Console.WriteLine(Label(draft));
+    Console.WriteLine(draft);
     Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s — 모델 로드 포함]");
 }
 
@@ -158,7 +148,7 @@ conversation.Add(ChatMessage.FromUser(secondTurnAsk));
 sw.Restart();
 Console.WriteLine("\n--- 2턴: 톤 수정 (멀티턴) ---");
 var revised = await generator.GenerateDraftAsync(context, conversation);
-Console.WriteLine(Label(revised));
+Console.WriteLine(revised);
 Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s]");
 
 // Third turn exercises the KV cache continuation a second time in a row: if the bookkeeping
@@ -169,13 +159,5 @@ conversation.Add(ChatMessage.FromUser("한 문장으로 짧게 줄여줘."));
 
 sw.Restart();
 Console.WriteLine("\n--- 3턴: 한 문장으로 축약 ---");
-Console.WriteLine(Label(await generator.GenerateDraftAsync(context, conversation)));
+Console.WriteLine(await generator.GenerateDraftAsync(context, conversation));
 Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s]");
-
-// Shows whether the model wrote a draft or kept talking — the distinction the whole
-// <draft> convention exists to make.
-static string Label(string raw)
-{
-    var parsed = DraftResponse.Parse(raw);
-    return $"[{(parsed.IsDraft ? "초안" : "되물음/대화")}] {parsed.Text}";
-}

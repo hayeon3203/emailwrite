@@ -160,18 +160,15 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <!-- Only a draft is worth copying; the rest of the
-                                                 thread is the conversation that produced it. -->
                                             <Button Content="복사" Click="CopyMessage_Click" Tag="{Binding Text}"
                                                     FontSize="10" Padding="4,1" Margin="0,4,0,-2"
                                                     HorizontalAlignment="Right">
                                                 <Button.Style>
                                                     <Style TargetType="Button" BasedOn="{StaticResource FlatIconButtonStyle}">
-                                                        <Setter Property="Foreground" Value="#FFE8EEFF" />
-                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Setter Property="Foreground" Value="#FF6A6A6A" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsDraft}" Value="True">
-                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            <DataTrigger Binding="{Binding IsAssistant}" Value="True">
+                                                                <Setter Property="Foreground" Value="#FFE8EEFF" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
