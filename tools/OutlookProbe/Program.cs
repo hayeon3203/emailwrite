@@ -18,6 +18,7 @@ internal static class Program
         Console.WriteLine($"발신자: {context.Current.SenderName}");
         Console.WriteLine($"수신 시각: {context.Current.ReceivedTime}");
         Console.WriteLine($"첨부파일: {FormatAttachments(context.Current.AttachmentNames)}");
+        Console.WriteLine($"본문 길이: {context.Current.Body.Length}자");
         Console.WriteLine($"본문 (앞 200자): {Truncate(context.Current.Body, 200)}");
 
         Console.WriteLine();
@@ -25,8 +26,14 @@ internal static class Program
         foreach (var msg in context.ThreadHistory)
         {
             Console.WriteLine($"- [{msg.ReceivedTime}] {msg.SenderName}: {msg.Subject} (첨부: {FormatAttachments(msg.AttachmentNames)})");
+            Console.WriteLine($"    본문 길이: {msg.Body.Length}자");
             Console.WriteLine($"    본문 (앞 100자): {Truncate(msg.Body, 100)}");
         }
+
+        var promptChars =
+            context.Current.Body.Length + context.ThreadHistory.Sum(m => m.Body.Length);
+        Console.WriteLine();
+        Console.WriteLine($"=== 프롬프트에 들어가는 본문 총합: {promptChars}자 ===");
     }
 
     private static string FormatAttachments(IReadOnlyList<string> names) =>

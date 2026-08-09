@@ -27,6 +27,13 @@ public partial class ChatPopupWindow : Window
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
 
+    /// <summary>
+    /// True while a draft is being generated. Local inference takes 10+ seconds, long enough that
+    /// the popup would otherwise auto-hide mid-generation the moment anything else takes focus —
+    /// throwing the draft away and tempting the user into a second F9 that restarts the whole thing.
+    /// </summary>
+    public bool IsBusy { get; private set; }
+
     public ChatPopupWindow() : this(new PlaceholderDraftGenerator())
     {
     }
@@ -47,6 +54,9 @@ public partial class ChatPopupWindow : Window
     /// </summary>
     private void ChatPopupWindow_Deactivated(object? sender, EventArgs e)
     {
+        if (IsBusy)
+            return;
+
         if (Owner != null && NativeMethods.GetForegroundWindow() == new WindowInteropHelper(Owner).Handle)
             return;
 
@@ -65,6 +75,7 @@ public partial class ChatPopupWindow : Window
         Messages.Clear();
         InputBox.Clear();
 
+        IsBusy = true;
         TypingIndicator.Visibility = Visibility.Visible;
         ScrollToBottom();
 
@@ -80,6 +91,7 @@ public partial class ChatPopupWindow : Window
 
         if (_emailContext == null && error != null)
         {
+            IsBusy = false;
             TypingIndicator.Visibility = Visibility.Collapsed;
             Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(error)));
             ScrollToBottom();
@@ -120,6 +132,7 @@ public partial class ChatPopupWindow : Window
 
     private async Task GenerateAndAppendDraftAsync()
     {
+        IsBusy = true;
         TypingIndicator.Visibility = Visibility.Visible;
         ScrollToBottom();
         try
@@ -138,6 +151,7 @@ public partial class ChatPopupWindow : Window
         }
         finally
         {
+            IsBusy = false;
             TypingIndicator.Visibility = Visibility.Collapsed;
             ScrollToBottom();
         }

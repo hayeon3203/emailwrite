@@ -92,7 +92,10 @@ public partial class MainWindow : Window
         _chatPopup.Show();
         _chatPopup.Activate();
 
-        _ = _chatPopup.OpenAsync();
+        // Re-showing a popup that's still generating just brings it back into view — restarting
+        // OpenAsync here would throw away the in-flight draft and queue a second inference behind it.
+        if (!_chatPopup.IsBusy)
+            _ = _chatPopup.OpenAsync();
     }
 
     private void PositionChatPopupAboveAvatar()

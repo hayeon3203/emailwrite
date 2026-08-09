@@ -18,6 +18,11 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 
     private readonly string _modelPath;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    // llama.cpp's context is not reentrant: a second llama_decode entering while the first is
+    // still running corrupts native memory and kills the process with an AccessViolationException
+    // (not catchable — the whole app dies). Reachable from the UI just by hitting F9 twice while
+    // a draft is still generating, so inference is serialized here rather than in each caller.
+    private readonly SemaphoreSlim _inferLock = new(1, 1);
     private LLamaWeights? _weights;
     private StatelessExecutor? _executor;
 
@@ -62,6 +67,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 
         var prompt = BuildPrompt(emailContext, conversation);
 
+        await _inferLock.WaitAsync(cancellationToken);
         try
         {
             var inferenceParams = new InferenceParams
@@ -82,6 +88,10 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         catch (Exception ex)
         {
             return $"로컬 모델 추론 중 오류가 발생했어요: {ex.Message}";
+        }
+        finally
+        {
+            _inferLock.Release();
         }
     }
 
@@ -184,5 +194,6 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     {
         _weights?.Dispose();
         _initLock.Dispose();
+        _inferLock.Dispose();
     }
 }

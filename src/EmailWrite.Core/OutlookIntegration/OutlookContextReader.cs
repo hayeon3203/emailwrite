@@ -192,8 +192,12 @@ public static class OutlookContextReader
             if (conversation == null)
                 return results;
 
+            // The conversation contains the mail being replied to as well; without this the
+            // prompt carries the exact same body twice, which on a 4k local context is enough
+            // on its own to overflow the KV cache ("NoKvSlot").
+            var currentEntryId = mail.EntryID;
             foreach (object rootItem in conversation.GetRootItems())
-                CollectMailItems(conversation, rootItem, results);
+                CollectMailItems(conversation, rootItem, currentEntryId, results);
         }
         catch (COMException)
         {
@@ -206,12 +210,13 @@ public static class OutlookContextReader
             .ToList();
     }
 
-    private static void CollectMailItems(Outlook.Conversation conversation, object item, List<EmailMessage> results)
+    private static void CollectMailItems(
+        Outlook.Conversation conversation, object item, string currentEntryId, List<EmailMessage> results)
     {
-        if (item is Outlook.MailItem mail)
+        if (item is Outlook.MailItem mail && mail.EntryID != currentEntryId)
             results.Add(ToEmailMessage(mail));
 
         foreach (object child in conversation.GetChildren(item))
-            CollectMailItems(conversation, child, results);
+            CollectMailItems(conversation, child, currentEntryId, results);
     }
 }

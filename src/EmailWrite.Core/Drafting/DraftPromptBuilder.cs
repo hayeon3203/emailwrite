@@ -12,6 +12,13 @@ namespace EmailWrite.Core.Drafting;
 /// </summary>
 internal static class DraftPromptBuilder
 {
+    // A real mail body is mostly signature, disclaimer and quoted history: the first real mail
+    // tested against was 4,585 chars for four sentences of content. Uncapped, that blows past the local
+    // model's 4k context (llama.cpp answers "NoKvSlot") and, when it does fit, spends minutes of
+    // CPU prefill on boilerplate. The reply is always near the top, so keeping the head is enough.
+    private const int MaxCurrentBodyChars = 1200;
+    private const int MaxHistoryBodyChars = 300;
+
     public const string SystemPrompt = """
         당신은 사용자가 Outlook에서 받은 메일에 대해, 메신저(카카오톡/슬랙 등)로 보낼 답장 초안을 작성하는 어시스턴트입니다.
         초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
@@ -46,14 +53,14 @@ internal static class DraftPromptBuilder
     {
         var sb = new StringBuilder();
         sb.AppendLine("## 답장할 메일");
-        AppendEmail(sb, context.Current);
+        AppendEmail(sb, context.Current, MaxCurrentBodyChars);
 
         if (context.ThreadHistory.Count > 0)
         {
             sb.AppendLine("## 스레드 히스토리 (최근 순, 참고용)");
             foreach (var message in context.ThreadHistory)
             {
-                AppendEmail(sb, message);
+                AppendEmail(sb, message, MaxHistoryBodyChars);
             }
         }
 
@@ -61,7 +68,7 @@ internal static class DraftPromptBuilder
         return sb.ToString();
     }
 
-    private static void AppendEmail(StringBuilder sb, EmailMessage message)
+    private static void AppendEmail(StringBuilder sb, EmailMessage message, int maxBodyChars)
     {
         sb.AppendLine($"- 제목: {message.Subject}");
         sb.AppendLine($"- 발신자: {message.SenderName}");
@@ -72,7 +79,10 @@ internal static class DraftPromptBuilder
         }
 
         sb.AppendLine("- 본문:");
-        sb.AppendLine(message.Body);
+        sb.AppendLine(Truncate(message.Body, maxBodyChars));
         sb.AppendLine();
     }
+
+    private static string Truncate(string body, int maxChars) =>
+        body.Length <= maxChars ? body : body[..maxChars] + "\n...(이하 생략)";
 }
