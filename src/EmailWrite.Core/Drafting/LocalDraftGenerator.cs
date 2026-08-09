@@ -134,7 +134,20 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 await DownloadModelAsync(cancellationToken);
             }
 
-            var modelParams = new ModelParams(_modelPath) { ContextSize = 4096 };
+            // LLamaSharp defaults to half the logical processors, which on this box (8 cores, no
+            // hyperthreading) left four of them idle: 18.1s -> 13.6s per turn just from asking for
+            // all of them. ProcessorCount is the right default on hybrid/non-HT CPUs and merely
+            // 2x-oversubscribed on hyperthreaded ones; EMAILWRITE_THREADS is the calibration knob
+            // for machines where that costs more than it gains.
+            var threads = int.TryParse(Environment.GetEnvironmentVariable("EMAILWRITE_THREADS"), out var t)
+                ? t
+                : Environment.ProcessorCount;
+            var modelParams = new ModelParams(_modelPath)
+            {
+                ContextSize = 4096,
+                Threads = threads,
+                BatchThreads = threads,
+            };
             _weights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
             _executor = new StatelessExecutor(_weights, modelParams);
             return _executor;
