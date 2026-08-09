@@ -103,14 +103,33 @@
                                 <StackPanel Orientation="Horizontal" Margin="4,4">
                                     <StackPanel.Style>
                                         <Style TargetType="StackPanel">
-                                            <Setter Property="HorizontalAlignment" Value="Left" />
+                                            <Setter Property="HorizontalAlignment" Value="Right" />
                                             <Style.Triggers>
                                                 <DataTrigger Binding="{Binding IsAssistant}" Value="True">
-                                                    <Setter Property="HorizontalAlignment" Value="Right" />
+                                                    <Setter Property="HorizontalAlignment" Value="Left" />
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </StackPanel.Style>
+
+                                    <!-- Avatar sits ahead of the bubble: the assistant is on the left now. -->
+                                    <Border Width="26" Height="26" CornerRadius="13" Margin="0,0,6,0"
+                                            VerticalAlignment="Bottom">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsAssistant}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Border.Background>
+                                            <ImageBrush ImageSource="/Assets/Avatar/daol-avatar-face.png"
+                                                        Stretch="UniformToFill" />
+                                        </Border.Background>
+                                    </Border>
 
                                     <Border CornerRadius="14" Padding="10,8" MaxWidth="210">
                                         <Border.Style>
@@ -151,24 +170,6 @@
                                                 </Button.Style>
                                             </Button>
                                         </StackPanel>
-                                    </Border>
-
-                                    <Border Width="26" Height="26" CornerRadius="13" Margin="6,0,0,0"
-                                            VerticalAlignment="Bottom">
-                                        <Border.Style>
-                                            <Style TargetType="Border">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsAssistant}" Value="True">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </Border.Style>
-                                        <Border.Background>
-                                            <ImageBrush ImageSource="/Assets/Avatar/daol-avatar-face.png"
-                                                        Stretch="UniformToFill" />
-                                        </Border.Background>
                                     </Border>
                                 </StackPanel>
                             </DataTemplate>

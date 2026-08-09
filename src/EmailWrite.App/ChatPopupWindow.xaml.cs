@@ -54,7 +54,11 @@ public partial class ChatPopupWindow : Window
     /// </summary>
     private void ChatPopupWindow_Deactivated(object? sender, EventArgs e)
     {
-        if (IsBusy)
+        // Only an untouched popup is disposable. Once the user has said what the reply should
+        // contain — or a draft exists — hiding it throws that away, since reopening starts a new
+        // conversation. Reading the mail again before typing is a normal thing to do, and it
+        // means clicking on Outlook, which is exactly what deactivates this window.
+        if (IsBusy || Messages.Any(m => !m.IsLocalOnly))
             return;
 
         if (Owner != null && NativeMethods.GetForegroundWindow() == new WindowInteropHelper(Owner).Handle)
@@ -64,7 +68,9 @@ public partial class ChatPopupWindow : Window
     }
 
     /// <summary>
-    /// Resets the conversation, re-reads the current Outlook context, and kicks off one draft.
+    /// Resets the conversation and re-reads the current Outlook context, then waits: the draft is
+    /// written from what the user says it should contain, so the popup opens by naming the mail it
+    /// picked up and asking for those points rather than guessing a reply from the mail alone.
     /// The Outlook COM round-trip runs off the UI thread — it's a cross-process call that can
     /// take a while, and leaving it on the UI thread freezes the whole app's message loop
     /// (the classic "spinning cursor, nothing happens" hang).
@@ -89,16 +95,26 @@ public partial class ChatPopupWindow : Window
             error = $"Outlook 컨텍스트를 읽는 중 오류가 발생했습니다: {ex.Message}";
         }
 
+        IsBusy = false;
+        TypingIndicator.Visibility = Visibility.Collapsed;
+
         if (_emailContext == null && error != null)
         {
-            IsBusy = false;
-            TypingIndicator.Visibility = Visibility.Collapsed;
-            Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(error)));
-            ScrollToBottom();
+            AddLocalMessage(error);
             return;
         }
 
-        await GenerateAndAppendDraftAsync();
+        // Naming the mail doubles as a check that the right one was picked up — several windows
+        // can be open at once, and the reader goes by which was focused last.
+        AddLocalMessage(
+            $"'{_emailContext!.Current.SenderName}'님의 \"{_emailContext.Current.Subject}\" 메일이에요.\n" +
+            "답장에 담을 내용을 알려주세요.");
+    }
+
+    private void AddLocalMessage(string text)
+    {
+        Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(text), isLocalOnly: true));
+        ScrollToBottom();
     }
 
     /// <summary>
@@ -137,7 +153,7 @@ public partial class ChatPopupWindow : Window
         ScrollToBottom();
         try
         {
-            var conversation = Messages.Select(m => m.Message).ToList();
+            var conversation = Messages.Where(m => !m.IsLocalOnly).Select(m => m.Message).ToList();
             var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation);
             Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft)));
         }
@@ -147,7 +163,7 @@ public partial class ChatPopupWindow : Window
             // return a user-facing message string; this is a backstop for anything that
             // still throws (e.g. an unexpected SDK exception) so it surfaces in the chat
             // instead of taking down the popup.
-            Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant($"초안 생성 중 오류가 발생했어요: {ex.Message}")));
+            AddLocalMessage($"초안 생성 중 오류가 발생했어요: {ex.Message}");
         }
         finally
         {

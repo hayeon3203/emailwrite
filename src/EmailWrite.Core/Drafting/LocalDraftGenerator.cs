@@ -299,9 +299,10 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             template.Add(role == ChatRole.User ? "user" : "assistant", text);
         }
 
-        template.Add("user", DraftPromptBuilder.BuildContextTurn(emailContext));
+        var (openingTurn, rest) = DraftPromptBuilder.BuildTurns(emailContext, conversation);
+        template.Add("user", openingTurn);
 
-        foreach (var message in conversation)
+        foreach (var message in rest)
         {
             template.Add(message.Role == ChatRole.User ? "user" : "assistant", message.Text);
         }

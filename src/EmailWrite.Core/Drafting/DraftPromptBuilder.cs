@@ -41,6 +41,7 @@ internal static class DraftPromptBuilder
     public const string SystemPrompt = """
         당신은 사용자가 Outlook에서 받은 메일에 대해, 메신저(카카오톡/슬랙 등)로 보낼 답장 초안을 작성하는 어시스턴트입니다.
         초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
+        사용자가 "답장에 담을 내용"을 알려주면, 그 내용만 자연스러운 문장으로 옮기세요. 거기 없는 약속·일정·수치는 절대 지어내지 마세요.
         이메일 형식(인사말, 서명 등)이 아니라 짧고 자연스러운 메신저 말투로 작성하세요. 2~3문장이면 충분합니다.
         초안은 반드시 원본 메일과 같은 언어로 작성하세요. 한국어 메일에는 한국어로 답하세요.
         사용자가 이후 대화에서 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 출력하세요.
@@ -60,14 +61,18 @@ internal static class DraftPromptBuilder
     /// </summary>
     public static readonly IReadOnlyList<(ChatRole Role, string Text)> ExampleTurns = new[]
     {
-        (ChatRole.User, BuildContextTurn(new EmailContext(
-            new EmailMessage(
-                "계약서 검토 요청",
-                "박지훈",
-                "첨부한 계약서 검토 부탁드립니다. 수요일까지 회신 주세요.",
-                new DateTime(2000, 1, 1),
-                new[] { "계약서.pdf" }),
-            Array.Empty<EmailMessage>()))),
+        (ChatRole.User, BuildContextTurn(
+            new EmailContext(
+                new EmailMessage(
+                    "계약서 검토 요청",
+                    "박지훈",
+                    "첨부한 계약서 검토 부탁드립니다. 수요일까지 회신 주세요.",
+                    new DateTime(2000, 1, 1),
+                    new[] { "계약서.pdf" }),
+                Array.Empty<EmailMessage>()),
+            // The example carries an intent too, so the model sees that the draft is built from
+            // what the user asked for — not invented from the mail alone.
+            "내일까지 검토해서 의견 정리해서 준다고, 수요일 전에는 회신한다고")),
         (ChatRole.Assistant, "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다."),
         (ChatRole.User, "좀 더 친근한 말투로 바꿔줘."),
         // Rewritten end to end, not just at the sentence endings: with a timid example — one
@@ -78,10 +83,27 @@ internal static class DraftPromptBuilder
     };
 
     /// <summary>
+    /// Splits a conversation into the opening turn and whatever follows it. The user's first
+    /// message says what the reply should contain, and it is folded into the same turn as the mail
+    /// rather than sent as a message of its own: two user turns in a row is not a shape the chat
+    /// templates (or the Anthropic API) expect, and the points to cover belong right next to the
+    /// mail they are about.
+    /// </summary>
+    public static (string OpeningTurn, IReadOnlyList<ChatMessage> Following) BuildTurns(
+        EmailContext context, IReadOnlyList<ChatMessage> conversation)
+    {
+        var intent = conversation.Count > 0 && conversation[0].Role == ChatRole.User
+            ? conversation[0].Text
+            : null;
+        var rest = intent != null ? conversation.Skip(1).ToList() : conversation;
+        return (BuildContextTurn(context, intent), rest);
+    }
+
+    /// <summary>
     /// The opening user turn: the Outlook context as quoted data, then the instruction.
     /// The instruction goes last on purpose — small models follow the most recent text best.
     /// </summary>
-    public static string BuildContextTurn(EmailContext context)
+    public static string BuildContextTurn(EmailContext context, string? intent = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine("## 답장할 메일");
@@ -96,7 +118,17 @@ internal static class DraftPromptBuilder
             }
         }
 
-        sb.Append($"위 메일을 보낸 '{context.Current.SenderName}'님에게 내가 보낼 메신저 답장 초안을 작성해줘.");
+        if (string.IsNullOrWhiteSpace(intent))
+        {
+            sb.Append($"위 메일을 보낸 '{context.Current.SenderName}'님에게 내가 보낼 메신저 답장 초안을 작성해줘.");
+            return sb.ToString();
+        }
+
+        sb.AppendLine("## 답장에 담을 내용");
+        sb.AppendLine(intent);
+        sb.AppendLine();
+        sb.Append($"위 내용을 '{context.Current.SenderName}'님에게 보낼 메신저 답장 초안으로 만들어줘. " +
+                  "담을 내용에 없는 약속이나 사실은 지어내지 마.");
         return sb.ToString();
     }
 

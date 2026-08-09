@@ -65,6 +65,13 @@ var secondTurnAsk = askIndex >= 0 && askIndex + 1 < args.Length
 var draftIndex = Array.IndexOf(args, "--draft");
 var pinnedDraft = draftIndex >= 0 && draftIndex + 1 < args.Length ? args[draftIndex + 1] : null;
 
+// What the user wants the reply to say. The draft is built from this, not from the mail alone,
+// so there is no first turn without it.
+var intentIndex = Array.IndexOf(args, "--intent");
+var intent = intentIndex >= 0 && intentIndex + 1 < args.Length
+    ? args[intentIndex + 1]
+    : "이번 주는 어려워서 다음 주 화요일에 회신하겠다고";
+
 var context = new EmailContext(
     new EmailMessage(
         "[공유] 3분기 마케팅 캠페인 예산안 검토 요청",
@@ -116,8 +123,10 @@ Console.WriteLine($"모델: {Environment.GetEnvironmentVariable("EMAILWRITE_MODE
 
 using var generator = new LocalDraftGenerator();
 
+var conversation = new List<ChatMessage> { ChatMessage.FromUser(intent) };
+
 var sw = Stopwatch.StartNew();
-Console.WriteLine("--- 1턴: 최초 초안 ---");
+Console.WriteLine($"--- 1턴: 최초 초안 (담을 내용: \"{intent}\") ---");
 string draft;
 if (pinnedDraft != null)
 {
@@ -126,18 +135,15 @@ if (pinnedDraft != null)
 }
 else
 {
-    draft = await generator.GenerateDraftAsync(context, Array.Empty<ChatMessage>());
+    draft = await generator.GenerateDraftAsync(context, conversation);
     Console.WriteLine(draft);
     Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s — 모델 로드 포함]");
 }
 
 // Second turn checks that the model actually revises its own draft rather than
 // re-answering the mail from scratch.
-var conversation = new List<ChatMessage>
-{
-    ChatMessage.FromAssistant(draft),
-    ChatMessage.FromUser(secondTurnAsk),
-};
+conversation.Add(ChatMessage.FromAssistant(draft));
+conversation.Add(ChatMessage.FromUser(secondTurnAsk));
 
 sw.Restart();
 Console.WriteLine("\n--- 2턴: 톤 수정 (멀티턴) ---");

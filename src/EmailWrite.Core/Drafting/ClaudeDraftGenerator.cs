@@ -47,12 +47,9 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
                 Content = t.Text,
             })
             .ToList();
-        messages.Add(new MessageParam
-        {
-            Role = Role.User,
-            Content = DraftPromptBuilder.BuildContextTurn(emailContext),
-        });
-        messages.AddRange(conversation.Select(m => new MessageParam
+        var (openingTurn, rest) = DraftPromptBuilder.BuildTurns(emailContext, conversation);
+        messages.Add(new MessageParam { Role = Role.User, Content = openingTurn });
+        messages.AddRange(rest.Select(m => new MessageParam
         {
             Role = m.Role == ChatRole.User ? Role.User : Role.Assistant,
             Content = m.Text,
