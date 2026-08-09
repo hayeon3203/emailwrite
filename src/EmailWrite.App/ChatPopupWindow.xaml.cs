@@ -2,9 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Threading;
-using EmailWrite.App.Interop;
 using EmailWrite.Core.Drafting;
 using EmailWrite.Core.OutlookIntegration;
 using Button = System.Windows.Controls.Button;
@@ -24,6 +22,7 @@ public partial class ChatPopupWindow : Window
 {
     private readonly IDraftGenerator _draftGenerator;
     private EmailContext? _emailContext;
+    private bool _sessionEnded = true;
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
 
@@ -43,29 +42,16 @@ public partial class ChatPopupWindow : Window
         _draftGenerator = draftGenerator;
         InitializeComponent();
         DataContext = this;
-        Deactivated += ChatPopupWindow_Deactivated;
     }
 
     /// <summary>
-    /// Auto-hides the popup when it loses focus (e.g. the user clicks elsewhere on
-    /// screen), except when the avatar itself was clicked — that click's own
-    /// MouseLeftButtonUp handler already owns the show/hide toggle, and hiding here
-    /// too would race it into immediately reopening.
+    /// Whether reopening should read Outlook again and start over, rather than bring back what
+    /// was on screen. Hiding keeps the conversation; closing ends it. The popup no longer hides
+    /// itself when it loses focus — writing a reply means looking at the mail, at a calendar, at
+    /// whatever else, and a window that vanishes on the first click elsewhere cannot be used for
+    /// that.
     /// </summary>
-    private void ChatPopupWindow_Deactivated(object? sender, EventArgs e)
-    {
-        // Only an untouched popup is disposable. Once the user has said what the reply should
-        // contain — or a draft exists — hiding it throws that away, since reopening starts a new
-        // conversation. Reading the mail again before typing is a normal thing to do, and it
-        // means clicking on Outlook, which is exactly what deactivates this window.
-        if (IsBusy || Messages.Any(m => !m.IsLocalOnly))
-            return;
-
-        if (Owner != null && NativeMethods.GetForegroundWindow() == new WindowInteropHelper(Owner).Handle)
-            return;
-
-        Hide();
-    }
+    public bool ShouldStartNewSession => !IsBusy && _sessionEnded;
 
     /// <summary>
     /// Resets the conversation and re-reads the current Outlook context, then waits: the draft is
@@ -81,6 +67,7 @@ public partial class ChatPopupWindow : Window
         Messages.Clear();
         InputBox.Clear();
 
+        _sessionEnded = false;
         IsBusy = true;
         TypingIndicator.Visibility = Visibility.Visible;
         ScrollToBottom();
@@ -227,5 +214,13 @@ public partial class ChatPopupWindow : Window
 
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => DragMove();
 
-    private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();
+    /// <summary>Out of the way, but still there when it comes back.</summary>
+    private void HideButton_Click(object sender, RoutedEventArgs e) => Hide();
+
+    /// <summary>Done with this mail: the next open reads Outlook again and starts a new thread.</summary>
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        _sessionEnded = true;
+        Hide();
+    }
 }

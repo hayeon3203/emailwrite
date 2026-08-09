@@ -82,9 +82,14 @@
                     <TextBlock Grid.Column="1" Text="EmailWrite" FontSize="14" FontWeight="SemiBold"
                                Foreground="#FF2A2A2A" VerticalAlignment="Center" Margin="8,0,0,0" />
 
-                    <Button Grid.Column="2" x:Name="CloseButton" Content="&#x2715;" Width="22" Height="22"
-                            Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
-                            Click="CloseButton_Click" />
+                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                        <Button x:Name="HideButton" Content="&#x2014;" Width="22" Height="22"
+                                Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
+                                ToolTip="숨기기 (대화 유지)" Click="HideButton_Click" />
+                        <Button x:Name="CloseButton" Content="&#x2715;" Width="22" Height="22"
+                                Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
+                                ToolTip="닫기 (대화 지우고 종료)" Click="CloseButton_Click" />
+                    </StackPanel>
                 </Grid>
             </Grid>
 
@@ -155,15 +160,18 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
+                                            <!-- Only a draft is worth copying; the rest of the
+                                                 thread is the conversation that produced it. -->
                                             <Button Content="복사" Click="CopyMessage_Click" Tag="{Binding Text}"
                                                     FontSize="10" Padding="4,1" Margin="0,4,0,-2"
                                                     HorizontalAlignment="Right">
                                                 <Button.Style>
                                                     <Style TargetType="Button" BasedOn="{StaticResource FlatIconButtonStyle}">
-                                                        <Setter Property="Foreground" Value="#FF6A6A6A" />
+                                                        <Setter Property="Foreground" Value="#FFE8EEFF" />
+                                                        <Setter Property="Visibility" Value="Collapsed" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsAssistant}" Value="True">
-                                                                <Setter Property="Foreground" Value="#FFE8EEFF" />
+                                                            <DataTrigger Binding="{Binding IsDraft}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>

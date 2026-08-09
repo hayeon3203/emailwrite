@@ -92,9 +92,10 @@ public partial class MainWindow : Window
         _chatPopup.Show();
         _chatPopup.Activate();
 
-        // Re-showing a popup that's still generating just brings it back into view — restarting
-        // OpenAsync here would throw away the in-flight draft and queue a second inference behind it.
-        if (!_chatPopup.IsBusy)
+        // Bringing a hidden popup back should show what was there, not throw it away: only a
+        // closed (or never opened) one starts over, and one still generating just comes back
+        // into view.
+        if (_chatPopup.ShouldStartNewSession)
             _ = _chatPopup.OpenAsync();
     }
 
