@@ -42,6 +42,10 @@ if (args.Contains("--selftest"))
     Check(DraftPromptBuilder.StripQuotedReply("본문\nFrom: a\n________________________________\n") == "본문",
         "가장 앞선 마커에서 자르지 않음");
 
+    Check(LocalDraftGenerator.StripChatMarkers("초안입니다.\n<|im_end|>") == "초안입니다.\n", "정지 토큰이 안 잘림");
+    Check(LocalDraftGenerator.StripChatMarkers("초안입니다.") == "초안입니다.", "토큰 없는 출력이 잘림");
+    Check(LocalDraftGenerator.StripChatMarkers("초안<|im_start|>assistant\n덧붙임") == "초안", "두 번째 마커에서 안 잘림");
+
     Console.WriteLine("selftest OK");
     return;
 }
@@ -137,5 +141,17 @@ var conversation = new List<ChatMessage>
 
 sw.Restart();
 Console.WriteLine("\n--- 2턴: 톤 수정 (멀티턴) ---");
+var revised = await generator.GenerateDraftAsync(context, conversation);
+Console.WriteLine(revised);
+Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s]");
+
+// Third turn exercises the KV cache continuation a second time in a row: if the bookkeeping
+// drifts by even one token, this is where it shows up as an answer that ignores the request or
+// talks about the wrong thing. "한 문장으로" is used because its effect is visible at a glance.
+conversation.Add(ChatMessage.FromAssistant(revised));
+conversation.Add(ChatMessage.FromUser("한 문장으로 짧게 줄여줘."));
+
+sw.Restart();
+Console.WriteLine("\n--- 3턴: 한 문장으로 축약 ---");
 Console.WriteLine(await generator.GenerateDraftAsync(context, conversation));
 Console.WriteLine($"[{sw.Elapsed.TotalSeconds:F1}s]");

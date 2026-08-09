@@ -24,7 +24,23 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     // a draft is still generating, so inference is serialized here rather than in each caller.
     private readonly SemaphoreSlim _inferLock = new(1, 1);
     private LLamaWeights? _weights;
-    private StatelessExecutor? _executor;
+    private ModelParams? _modelParams;
+
+    // Prefill is essentially the entire cost of a turn: capping generation at 8 tokens instead of
+    // 512 moved a turn from 14.0s to 13.6s, so ~13.6s of it is processing the prompt. Almost all of
+    // that prompt is identical to the previous turn's — same system prompt, same examples, same
+    // mail, same earlier messages — so an InteractiveExecutor holds the KV cache between turns and
+    // only the newly appended text gets fed. That drops a revision turn to ~2.6s.
+    //
+    // The bookkeeping below tracks what the cache actually holds rather than re-rendering the
+    // whole prompt and diffing: the rendered form of a past turn is not byte-identical to what was
+    // generated (the reply gets trimmed and its control tokens stripped before it is shown), so a
+    // prefix comparison breaks on a stray newline and silently falls back to a full prefill.
+    private LLamaContext? _context;
+    private InteractiveExecutor? _executor;
+    private EmailContext? _sessionMail;
+    private int _fedMessageCount;
+    private bool _kvEndsAtTurnEnd;
 
     public LocalDraftGenerator()
     {
@@ -55,21 +71,34 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             return "Outlook에서 열려있거나 선택된 메일을 찾지 못했어요. 메일을 연 뒤 다시 열어주세요.";
         }
 
-        StatelessExecutor executor;
         try
         {
-            executor = await EnsureReadyAsync(cancellationToken);
+            await EnsureWeightsAsync(cancellationToken);
         }
         catch (Exception ex)
         {
             return $"로컬 모델을 준비하는 중 오류가 발생했어요(AVX2 미지원 CPU이거나 다운로드에 실패했을 수 있어요): {ex.Message}";
         }
 
-        var prompt = BuildPrompt(emailContext, conversation);
-
         await _inferLock.WaitAsync(cancellationToken);
         try
         {
+            // Continue the live cache only when this is the same mail and the conversation has
+            // merely grown; a reopened popup (which clears the messages) or a different mail
+            // fails the test and starts over.
+            string toFeed;
+            if (_executor != null && ReferenceEquals(_sessionMail, emailContext) &&
+                conversation.Count > _fedMessageCount)
+            {
+                toFeed = BuildContinuation(conversation.Skip(_fedMessageCount));
+            }
+            else
+            {
+                StartSession();
+                _sessionMail = emailContext;
+                toFeed = BuildPrompt(emailContext, conversation);
+            }
+
             var inferenceParams = new InferenceParams
             {
                 MaxTokens = 512,
@@ -77,22 +106,53 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             };
 
             var text = new System.Text.StringBuilder();
-            await foreach (var token in executor.InferAsync(prompt, inferenceParams, cancellationToken))
+            await foreach (var token in _executor!.InferAsync(toFeed, inferenceParams, cancellationToken))
             {
                 text.Append(token);
             }
 
-            var result = StripThinking(text.ToString());
+            // The cache now also holds the reply just generated, which the caller will hand back
+            // as the next conversation entry — hence +1.
+            var raw = text.ToString();
+            _fedMessageCount = conversation.Count + 1;
+            _kvEndsAtTurnEnd = raw.TrimEnd().EndsWith("<|im_end|>", StringComparison.Ordinal);
+
+            var result = StripThinking(StripChatMarkers(raw));
             return string.IsNullOrWhiteSpace(result) ? "응답을 받지 못했어요." : result;
         }
         catch (Exception ex)
         {
+            // A failed or cancelled run leaves the KV cache holding an unknown amount of the
+            // prompt. Forget the fast path rather than feed the next turn a continuation that
+            // assumes a prefix which may not be there.
+            _sessionMail = null;
             return $"로컬 모델 추론 중 오류가 발생했어요: {ex.Message}";
         }
         finally
         {
             _inferLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Cuts the reply at the first ChatML control token. StatelessExecutor swallowed the
+    /// anti-prompt it stopped on; InteractiveExecutor streams it through, so without this the
+    /// draft shown to the user ends in a literal "&lt;|im_end|&gt;". Only the display copy is
+    /// trimmed — the raw text stays in _fedPrompt, because those tokens really are in the KV
+    /// cache and the next turn's prefix has to account for them.
+    /// </summary>
+    internal static string StripChatMarkers(string raw)
+    {
+        foreach (var marker in new[] { "<|im_end|>", "<|im_start|>" })
+        {
+            var index = raw.IndexOf(marker, StringComparison.Ordinal);
+            if (index >= 0)
+            {
+                raw = raw[..index];
+            }
+        }
+
+        return raw;
     }
 
     /// <summary>
@@ -105,19 +165,19 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         return (end >= 0 ? raw[(end + "</think>".Length)..] : raw).Trim();
     }
 
-    private async Task<StatelessExecutor> EnsureReadyAsync(CancellationToken cancellationToken)
+    private async Task EnsureWeightsAsync(CancellationToken cancellationToken)
     {
-        if (_executor != null)
+        if (_weights != null)
         {
-            return _executor;
+            return;
         }
 
         await _initLock.WaitAsync(cancellationToken);
         try
         {
-            if (_executor != null)
+            if (_weights != null)
             {
-                return _executor;
+                return;
             }
 
             if (!File.Exists(_modelPath))
@@ -148,14 +208,57 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 Threads = threads,
                 BatchThreads = threads,
             };
+            _modelParams = modelParams;
             _weights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
-            _executor = new StatelessExecutor(_weights, modelParams);
-            return _executor;
         }
         finally
         {
             _initLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Throws away the live KV cache and starts a fresh one. Called whenever the next prompt
+    /// isn't a continuation of what the context already holds — a different mail, a reopened
+    /// popup, or a turn that failed partway through.
+    /// </summary>
+    private void StartSession()
+    {
+        _executor = null;
+        _context?.Dispose();
+        _context = new LLamaContext(_weights!, _modelParams!);
+        _executor = new InteractiveExecutor(_context);
+        _sessionMail = null;
+        _fedMessageCount = 0;
+        _kvEndsAtTurnEnd = false;
+    }
+
+    /// <summary>
+    /// The ChatML the cache still needs in order to continue: close the reply that is already in
+    /// it (unless generation stopped on the closing token and it went in too), then the new
+    /// messages, then the header that hands the turn back to the model. Written out by hand
+    /// rather than via <see cref="LLamaTemplate"/>, which can only render a conversation from the
+    /// system prompt down — the whole point here is to render only the tail.
+    /// </summary>
+    private string BuildContinuation(IEnumerable<ChatMessage> newMessages)
+    {
+        var sb = new System.Text.StringBuilder();
+        if (!_kvEndsAtTurnEnd)
+        {
+            sb.Append("<|im_end|>");
+        }
+
+        sb.Append('\n');
+        foreach (var message in newMessages)
+        {
+            sb.Append("<|im_start|>")
+              .Append(message.Role == ChatRole.User ? "user" : "assistant")
+              .Append('\n')
+              .Append(message.Text)
+              .Append("<|im_end|>\n");
+        }
+
+        return sb.Append("<|im_start|>assistant\n").ToString();
     }
 
     private async Task DownloadModelAsync(CancellationToken cancellationToken)
@@ -208,6 +311,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 
     public void Dispose()
     {
+        _context?.Dispose();
         _weights?.Dispose();
         _initLock.Dispose();
         _inferLock.Dispose();
