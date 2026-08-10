@@ -150,6 +150,22 @@ using var generator = new LocalDraftGenerator();
 
 var conversation = new List<ChatMessage> { ChatMessage.FromUser(intent) };
 
+// --repeat N generates the first-turn draft N times and stops. Sampling makes a single run say
+// nothing about how often the model collapses into "네, 알겠습니다." — that needs a sample, and
+// relaunching the process per sample would pay the model load every time. The session id changes
+// each round so the KV cache is dropped and every draft starts from the same cold prompt.
+var repeatIndex = Array.IndexOf(args, "--repeat");
+if (repeatIndex >= 0 && repeatIndex + 1 < args.Length && int.TryParse(args[repeatIndex + 1], out var repeat))
+{
+    for (var i = 0; i < repeat; i++)
+    {
+        var sample = await generator.GenerateDraftAsync(context, conversation, sessionId: i + 100);
+        Console.WriteLine($"{i + 1,3}. [{sample.Length,3}자] {sample.Replace("\n", " ")}");
+    }
+
+    return;
+}
+
 var sw = Stopwatch.StartNew();
 Console.WriteLine($"--- 1턴: 최초 초안 (담을 내용: \"{intent}\") ---");
 string draft;
