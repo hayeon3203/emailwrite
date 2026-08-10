@@ -117,13 +117,38 @@ internal static class DraftPromptBuilder
     /// second-round wording. The revision round is not optional here either: it is what stops the
     /// model from answering "네, 그렇게 해드릴게요." to a tone change instead of redrafting.
     /// </summary>
-    public static readonly IReadOnlyList<(ChatRole Role, string Text)> FreeExampleTurns = new[]
+    public static readonly IReadOnlyList<(ChatRole Role, string Text)> FreeExampleTurns = BuildFreeExamples();
+
+    /// <summary>
+    /// Experiment scaffolding, to be deleted once the free-writing candidates are settled: each
+    /// switch is off unless its variable is "1", so the measured baseline is what runs by default
+    /// and one candidate at a time can be turned on. Same idea as EMAILWRITE_MODEL/THREADS/TEMP.
+    /// </summary>
+    private static bool Flag(string name) => Environment.GetEnvironmentVariable(name) == "1";
+
+    private static IReadOnlyList<(ChatRole Role, string Text)> BuildFreeExamples()
     {
-        (ChatRole.User, BuildFreeTurn("내일 저녁 약속 못 갈 것 같다고, 다음 주 화요일로 미루자고")),
-        (ChatRole.Assistant, "죄송합니다, 내일 저녁 약속은 참석이 어려울 것 같습니다. 혹시 다음 주 화요일로 미뤄주실 수 있을까요?"),
-        (ChatRole.User, "조금 더 부드럽게 바꿔줘."),
-        (ChatRole.Assistant, "내일 저녁 약속 관련해서 말씀드립니다. 일정이 여의치 않아 참석이 어려울 것 같습니다. 괜찮으시다면 다음 주 화요일로 미뤄주시면 감사하겠습니다."),
-    };
+        var turns = new List<(ChatRole, string)>
+        {
+            (ChatRole.User, BuildFreeTurn("내일 저녁 약속 못 갈 것 같다고, 다음 주 화요일로 미루자고")),
+            (ChatRole.Assistant, "죄송합니다, 내일 저녁 약속은 참석이 어려울 것 같습니다. 혹시 다음 주 화요일로 미뤄주실 수 있을까요?"),
+            (ChatRole.User, "조금 더 부드럽게 바꿔줘."),
+            (ChatRole.Assistant, "내일 저녁 약속 관련해서 말씀드립니다. 일정이 여의치 않아 참석이 어려울 것 같습니다. 괜찮으시다면 다음 주 화요일로 미뤄주시면 감사하겠습니다."),
+        };
+
+        // Candidate 2. Every turn above is one scenario -- calling off an appointment and moving
+        // it -- and the drafts that failed worst applied exactly that move to content that did
+        // not call for it ("회의 시작을 앞당겨주실 수 있을까요"). This pair is deliberately the
+        // other shape, and the shape the failing test intent actually has: state something, then
+        // ask for something, with both halves surviving into the draft.
+        if (Flag("EMAILWRITE_EX2"))
+        {
+            turns.Add((ChatRole.User, BuildFreeTurn("자료 정리해서 공유 폴더에 올려뒀다고, 확인 후 피드백 달라고")));
+            turns.Add((ChatRole.Assistant, "요청하신 자료 정리해서 공유 폴더에 올려두었습니다. 확인해보시고 피드백 주시면 감사하겠습니다."));
+        }
+
+        return turns.Select(t => (t.Item1, t.Item2)).ToList();
+    }
 
     /// <summary>
     /// Splits a conversation into the opening turn and whatever follows it. The user's first
@@ -150,8 +175,17 @@ internal static class DraftPromptBuilder
         ## 보낼 메시지에 담을 내용
         {intent}
 
-        위 내용으로 보낼 메신저 메시지 초안을 만들어줘. 담을 내용에 없는 약속이나 사실은 지어내지 마.
+        위 내용으로 {FreeRecipient()}보낼 메신저 메시지 초안을 만들어줘. 담을 내용에 없는 약속이나 사실은 지어내지 마.
         """;
+
+    /// <summary>
+    /// Candidate 3. The mail path names who the draft is for ("'김민수 팀장'님에게 보낼"); the free
+    /// path names nobody, so the only mention of a recipient is one line of the system prompt,
+    /// far from the instruction the model follows best. A method rather than a field: this is
+    /// called while <see cref="FreeExampleTurns"/> is being initialised, and a static field read
+    /// there would be whatever it was before its own initialiser ran.
+    /// </summary>
+    private static string FreeRecipient() => Flag("EMAILWRITE_RCPT") ? "상사에게 " : "";
 
     /// <summary>
     /// The opening user turn: the Outlook context as quoted data, then the instruction.

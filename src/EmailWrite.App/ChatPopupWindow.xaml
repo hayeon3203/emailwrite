@@ -211,7 +211,7 @@
                              example is the cheapest place to stop it — the model cannot be told
                              to ask for the content instead, which is what M12 already tried
                              twice. Sits on top of the box and lets clicks through to it. -->
-                        <TextBlock Text="예: 내일까지 검토해서 드린다고" IsHitTestVisible="False"
+                        <TextBlock x:Name="InputHint" Text="예: 내일까지 검토해서 드린다고" IsHitTestVisible="False"
                                    Foreground="#FFA8A8AD" FontSize="13"
                                    Margin="12,0,0,0" VerticalAlignment="Center">
                             <TextBlock.Style>

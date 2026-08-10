@@ -95,10 +95,15 @@ public partial class ChatPopupWindow : Window
         // apart when the user expected a mail to be there.
         if (_emailContext == null)
         {
+            // The default hint is about replying to a mail, which is the one thing there isn't
+            // one of here.
+            InputHint.Text = "예: 내일 오전 회의 30분 늦는다고";
             AddLocalMessage(
                 $"{error ?? "열려있거나 선택된 메일이 없습니다."}\n보낼 메시지 내용을 알려주시면 초안을 써드릴게요.");
             return;
         }
+
+        InputHint.Text = "예: 내일까지 검토해서 드린다고";
 
         // Naming the mail doubles as a check that the right one was picked up — several windows
         // can be open at once, and the reader goes by which was focused last.
