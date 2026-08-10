@@ -83,6 +83,9 @@
                                Foreground="#FF2A2A2A" VerticalAlignment="Center" Margin="8,0,0,0" />
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal">
+                        <Button x:Name="RestartButton" Content="&#x21BB;" Width="22" Height="22"
+                                Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
+                                ToolTip="새로 시작 (대화 지우고 Outlook 다시 읽기)" Click="RestartButton_Click" />
                         <Button x:Name="HideButton" Content="&#x2014;" Width="22" Height="22"
                                 Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
                                 ToolTip="숨기기 (대화 유지)" Click="HideButton_Click" />

@@ -144,6 +144,31 @@ else if (useOutlook)
     }
 }
 
+// --dump-prompt prints what the model is handed, turn by turn, and stops. No weights are loaded:
+// everything below the ChatML wrapper comes out of DraftPromptBuilder, so this shows the content
+// exactly as the real run assembles it, without waiting on inference.
+if (args.Contains("--dump-prompt"))
+{
+    var (dumpSystem, dumpExamples) = DraftPromptBuilder.PromptFor(context);
+    var (dumpOpening, dumpRest) = DraftPromptBuilder.BuildTurns(
+        context, new[] { ChatMessage.FromUser(intent) });
+
+    Console.WriteLine($"===== [system] =====\n{dumpSystem}\n");
+    var turn = 0;
+    foreach (var (role, text) in dumpExamples)
+    {
+        Console.WriteLine($"===== [{(role == ChatRole.User ? "user" : "assistant")}] 1-shot 예시 {++turn} =====\n{text}\n");
+    }
+
+    Console.WriteLine($"===== [user] 실제 여는 턴 =====\n{dumpOpening}\n");
+    foreach (var message in dumpRest)
+    {
+        Console.WriteLine($"===== [{(message.Role == ChatRole.User ? "user" : "assistant")}] 이후 턴 =====\n{message.Text}\n");
+    }
+
+    return;
+}
+
 Console.WriteLine($"모델: {Environment.GetEnvironmentVariable("EMAILWRITE_MODEL") ?? "(기본값)"}\n");
 
 using var generator = new LocalDraftGenerator();

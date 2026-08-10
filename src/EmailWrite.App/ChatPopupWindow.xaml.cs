@@ -223,6 +223,24 @@ public partial class ChatPopupWindow : Window
 
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e) => DragMove();
 
+    /// <summary>
+    /// Start over without the popup going away. Two things needed this. A conversation can get
+    /// stuck — a first message the model answers *about* rather than acts on leaves a turn that
+    /// turns every later turn into a refusal — and drafts are unreliable often enough that
+    /// throwing one away is a normal move, not an error path. Until now both meant closing the
+    /// popup and reopening it. This also re-reads Outlook, so it is the way to move to a
+    /// different mail: hiding and reopening keeps the old conversation on purpose.
+    /// </summary>
+    private async void RestartButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Mid-generation the reply is still coming and OpenAsync would clear the messages out
+        // from under it, leaving the finished draft to land in a conversation it never saw.
+        if (IsBusy)
+            return;
+
+        await OpenAsync();
+    }
+
     /// <summary>Out of the way, but still there when it comes back.</summary>
     private void HideButton_Click(object sender, RoutedEventArgs e) => Hide();
 
