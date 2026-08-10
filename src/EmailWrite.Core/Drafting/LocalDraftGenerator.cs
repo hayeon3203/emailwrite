@@ -1,5 +1,7 @@
+using System.Globalization;
 using LLama;
 using LLama.Common;
+using LLama.Sampling;
 using EmailWrite.Core.OutlookIntegration;
 
 namespace EmailWrite.Core.Drafting;
@@ -104,6 +106,11 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 AntiPrompts = new List<string> { "<|im_end|>", "<|im_start|>" },
             };
 
+            if (ReadTemperature() is { } temperature)
+            {
+                inferenceParams.SamplingPipeline = new DefaultSamplingPipeline { Temperature = temperature };
+            }
+
             var text = new System.Text.StringBuilder();
             await foreach (var token in _executor!.InferAsync(toFeed, inferenceParams, cancellationToken))
             {
@@ -131,6 +138,24 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         {
             _inferLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Sampling is left at llama.cpp's default unless EMAILWRITE_TEMP says otherwise, so the
+    /// measured baseline stays reproducible and the temperature can be A/B'd without a rebuild
+    /// (same idea as EMAILWRITE_MODEL and EMAILWRITE_THREADS). Returning null means "don't set a
+    /// pipeline", which is what the code did before this knob existed.
+    ///
+    /// Worth trying because the draft failures look like sampling rather than capability: twenty
+    /// runs of one unchanged prompt produced twenty different messages, thirteen of them fine.
+    /// Writing a draft from points the user already supplied does not need much creativity.
+    /// </summary>
+    private static float? ReadTemperature()
+    {
+        var raw = Environment.GetEnvironmentVariable("EMAILWRITE_TEMP");
+        return float.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var temperature)
+            ? temperature
+            : null;
     }
 
     /// <summary>
