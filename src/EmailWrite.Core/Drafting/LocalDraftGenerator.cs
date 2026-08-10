@@ -38,7 +38,11 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     // prefix comparison breaks on a stray newline and silently falls back to a full prefill.
     private LLamaContext? _context;
     private InteractiveExecutor? _executor;
-    private EmailContext? _sessionMail;
+    // Which conversation the cache belongs to. -1 means "nothing usable in there". This used to
+    // compare the EmailContext by reference, which worked only as long as there was always a mail:
+    // with free-writing both sides are null, null equals null, and a brand new conversation would
+    // look like a continuation of the last one.
+    private int _sessionId = -1;
     private int _fedMessageCount;
     private bool _kvEndsAtTurnEnd;
 
@@ -64,13 +68,9 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     public async Task<string> GenerateDraftAsync(
         EmailContext? emailContext,
         IReadOnlyList<ChatMessage> conversation,
+        int sessionId = 0,
         CancellationToken cancellationToken = default)
     {
-        if (emailContext == null)
-        {
-            return "Outlook에서 열려있거나 선택된 메일을 찾지 못했어요. 메일을 연 뒤 다시 열어주세요.";
-        }
-
         try
         {
             await EnsureWeightsAsync(cancellationToken);
@@ -83,19 +83,18 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         await _inferLock.WaitAsync(cancellationToken);
         try
         {
-            // Continue the live cache only when this is the same mail and the conversation has
-            // merely grown; a reopened popup (which clears the messages) or a different mail
-            // fails the test and starts over.
+            // Continue the live cache only when this is the same conversation and it has merely
+            // grown; a reopened popup arrives with a new session id and starts over. The mail is
+            // fixed when the session opens, so the id alone settles both questions.
             string toFeed;
-            if (_executor != null && ReferenceEquals(_sessionMail, emailContext) &&
-                conversation.Count > _fedMessageCount)
+            if (_executor != null && _sessionId == sessionId && conversation.Count > _fedMessageCount)
             {
                 toFeed = BuildContinuation(conversation.Skip(_fedMessageCount));
             }
             else
             {
                 StartSession();
-                _sessionMail = emailContext;
+                _sessionId = sessionId;
                 toFeed = BuildPrompt(emailContext, conversation);
             }
 
@@ -125,7 +124,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             // A failed or cancelled run leaves the KV cache holding an unknown amount of the
             // prompt. Forget the fast path rather than feed the next turn a continuation that
             // assumes a prefix which may not be there.
-            _sessionMail = null;
+            _sessionId = -1;
             return $"로컬 모델 추론 중 오류가 발생했어요: {ex.Message}";
         }
         finally
@@ -228,7 +227,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         _context?.Dispose();
         _context = new LLamaContext(_weights!, _modelParams!);
         _executor = new InteractiveExecutor(_context);
-        _sessionMail = null;
+        _sessionId = -1;
         _fedMessageCount = 0;
         _kvEndsAtTurnEnd = false;
     }
@@ -283,7 +282,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     /// chat template (Qwen2.5's ChatML), mirroring <see cref="ClaudeDraftGenerator"/>'s
     /// "resend the whole history every turn" approach instead of keeping session state.
     /// </summary>
-    private string BuildPrompt(EmailContext emailContext, IReadOnlyList<ChatMessage> conversation)
+    private string BuildPrompt(EmailContext? emailContext, IReadOnlyList<ChatMessage> conversation)
     {
         // AddAssistant appends the "<|im_start|>assistant" header the model needs to start
         // its turn. It defaults to false, and without it generation trips the "<|im_start|>"
@@ -292,9 +291,10 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         // (~43s vs ~13s) for a two-sentence draft. It means nothing to other models, so it's
         // only appended for Qwen to keep a stray token out of everyone else's system prompt.
         var isQwen = _modelPath.Contains("qwen", StringComparison.OrdinalIgnoreCase);
+        var (systemPrompt, examples) = DraftPromptBuilder.PromptFor(emailContext);
         var template = new LLamaTemplate(_weights!) { AddAssistant = true };
-        template.Add("system", DraftPromptBuilder.SystemPrompt + (isQwen ? "\n/no_think" : ""));
-        foreach (var (role, text) in DraftPromptBuilder.ExampleTurns)
+        template.Add("system", systemPrompt + (isQwen ? "\n/no_think" : ""));
+        foreach (var (role, text) in examples)
         {
             template.Add(role == ChatRole.User ? "user" : "assistant", text);
         }

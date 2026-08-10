@@ -11,7 +11,8 @@ using EmailWrite.Core.OutlookIntegration;
 //
 // llama.cpp writes a few hundred lines of load/repack chatter to stderr; pipe it away with
 //   ... 2>$null
-// Pass --outlook to run against the mail actually open in Outlook instead of the fake one.
+// Pass --outlook to run against the mail actually open in Outlook instead of the fake one, or
+// --nomail to run the free-writing path, where there is no mail and only --intent drives the draft.
 // The multi-turn quality bugs (wrong self-identification, email register creeping back in)
 // only reproduce on real mail, whose body carries quoted headers and a signature block.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -46,18 +47,37 @@ if (args.Contains("--selftest"))
     Check(LocalDraftGenerator.StripChatMarkers("초안입니다.") == "초안입니다.", "토큰 없는 출력이 잘림");
     Check(LocalDraftGenerator.StripChatMarkers("초안<|im_start|>assistant\n덧붙임") == "초안", "두 번째 마커에서 안 잘림");
 
+    // 자유 작성 모드: 메일이 없으면 여는 턴에도 시스템 프롬프트에도 메일이 등장하면 안 됨.
+    // 이게 깨지면 모델은 존재하지 않는 메일에 답장하려 들고, 없는 발신자 이름을 지어냄.
+    var (freeTurn, freeRest) = DraftPromptBuilder.BuildTurns(
+        null, new[] { ChatMessage.FromUser("내일 회의 30분 늦는다고") });
+    Check(freeTurn.Contains("내일 회의 30분 늦는다고"), $"담을 내용이 여는 턴에서 빠짐: {freeTurn}");
+    Check(!freeTurn.Contains("## 답장할 메일"), $"메일이 없는데 메일 섹션이 들어감: {freeTurn}");
+    Check(freeRest.Count == 0, "첫 메시지가 여는 턴으로 접히지 않음");
+
+    var mailCtx = new EmailContext(
+        new EmailMessage("제목", "보낸이", "본문", new DateTime(2000, 1, 1), Array.Empty<string>()),
+        Array.Empty<EmailMessage>());
+    Check(DraftPromptBuilder.PromptFor(mailCtx).System.Contains("Outlook"), "메일이 있는데 자유 작성 프롬프트가 선택됨");
+    Check(!DraftPromptBuilder.PromptFor(null).System.Contains("Outlook"), "메일이 없는데 메일 전제 프롬프트가 선택됨");
+    Check(DraftPromptBuilder.PromptFor(null).Examples.Count > 0, "자유 작성 예시가 비어있음");
+
     Console.WriteLine("selftest OK");
     return;
 }
 
 var useOutlook = args.Contains("--outlook");
 
-// The second-turn request decides which failure shows up: "짧게" mostly behaves, while
-// "친근하게" is what made the model prepend a preamble and slip back into email register.
+// Free-writing mode: no mail at all, the draft comes from --intent alone. This is what the popup
+// does when Outlook has nothing open, and it exercises the other prompt set.
+var noMail = args.Contains("--nomail");
+
+// The second-turn request decides which failure shows up: "짧게" mostly behaves, while a tone
+// change is what made the model prepend a preamble and slip back into email register.
 var askIndex = Array.IndexOf(args, "--ask");
 var secondTurnAsk = askIndex >= 0 && askIndex + 1 < args.Length
     ? args[askIndex + 1]
-    : "좀 더 짧고 캐주얼하게 바꿔줘.";
+    : "조금 더 부드럽게 바꿔줘.";
 
 // --draft pins the first-turn draft instead of generating one. Sampling makes turn 1 vary
 // wildly, and the multi-turn failure only shows up when that draft came out terse ("네,
@@ -72,7 +92,7 @@ var intent = intentIndex >= 0 && intentIndex + 1 < args.Length
     ? args[intentIndex + 1]
     : "이번 주는 어려워서 다음 주 화요일에 회신하겠다고";
 
-var context = new EmailContext(
+EmailContext? context = new EmailContext(
     new EmailMessage(
         "[공유] 3분기 마케팅 캠페인 예산안 검토 요청",
         "김민수 팀장",
@@ -89,7 +109,12 @@ var context = new EmailContext(
             Array.Empty<string>()),
     });
 
-if (useOutlook)
+if (noMail)
+{
+    context = null;
+    Console.WriteLine("메일 없음(자유 작성 모드)");
+}
+else if (useOutlook)
 {
     // Outlook's COM objects are STA-only, and top-level statements can't carry [STAThread].
     EmailContext? live = null;

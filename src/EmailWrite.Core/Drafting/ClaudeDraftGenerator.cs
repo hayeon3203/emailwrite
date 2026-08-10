@@ -26,6 +26,7 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
     public async Task<string> GenerateDraftAsync(
         EmailContext? emailContext,
         IReadOnlyList<ChatMessage> conversation,
+        int sessionId = 0,
         CancellationToken cancellationToken = default)
     {
         if (_client == null)
@@ -33,14 +34,13 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
             return "ANTHROPIC_API_KEY 환경변수가 설정되어 있지 않아요. 설정한 뒤 앱을 다시 시작해주세요.";
         }
 
-        if (emailContext == null)
-        {
-            return "Outlook에서 열려있거나 선택된 메일을 찾지 못했어요. 메일을 연 뒤 다시 열어주세요.";
-        }
+        // Nothing is cached between calls here — the whole history is resent every turn — so
+        // sessionId has nothing to do; it exists for LocalDraftGenerator's KV cache.
+        var (systemPrompt, examples) = DraftPromptBuilder.PromptFor(emailContext);
 
         // The Outlook context is the opening user turn, so the conversation always starts
         // with a user message and stays correctly alternating on every follow-up turn.
-        var messages = DraftPromptBuilder.ExampleTurns
+        var messages = examples
             .Select(t => new MessageParam
             {
                 Role = t.Role == ChatRole.User ? Role.User : Role.Assistant,
@@ -62,7 +62,7 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
             {
                 Model = ModelId,
                 MaxTokens = 1024,
-                System = DraftPromptBuilder.SystemPrompt,
+                System = systemPrompt,
                 Messages = messages,
             });
         }

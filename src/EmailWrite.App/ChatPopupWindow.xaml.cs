@@ -23,6 +23,8 @@ public partial class ChatPopupWindow : Window
     private readonly IDraftGenerator _draftGenerator;
     private EmailContext? _emailContext;
     private bool _sessionEnded = true;
+    // Bumped on every open so the generator can tell a new conversation from a longer one.
+    private int _sessionId;
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
 
@@ -67,6 +69,7 @@ public partial class ChatPopupWindow : Window
         Messages.Clear();
         InputBox.Clear();
 
+        _sessionId++;
         _sessionEnded = false;
         IsBusy = true;
         TypingIndicator.Visibility = Visibility.Visible;
@@ -85,16 +88,22 @@ public partial class ChatPopupWindow : Window
         IsBusy = false;
         TypingIndicator.Visibility = Visibility.Collapsed;
 
-        if (_emailContext == null && error != null)
+        // No mail is no longer a dead end. Nothing was open in Outlook, so there is nothing to
+        // reply to — but writing the message is still the part worth doing, so the popup says
+        // what it found and asks for the content either way. The reason is kept in the line
+        // because "Outlook이 실행 중이 아닙니다" and "선택된 메일이 없습니다" are worth telling
+        // apart when the user expected a mail to be there.
+        if (_emailContext == null)
         {
-            AddLocalMessage(error);
+            AddLocalMessage(
+                $"{error ?? "열려있거나 선택된 메일이 없습니다."}\n보낼 메시지 내용을 알려주시면 초안을 써드릴게요.");
             return;
         }
 
         // Naming the mail doubles as a check that the right one was picked up — several windows
         // can be open at once, and the reader goes by which was focused last.
         AddLocalMessage(
-            $"'{_emailContext!.Current.SenderName}'님의 \"{_emailContext.Current.Subject}\" 메일이에요.\n" +
+            $"'{_emailContext.Current.SenderName}'님의 \"{_emailContext.Current.Subject}\" 메일이에요.\n" +
             "답장에 담을 내용을 알려주세요.");
     }
 
@@ -141,7 +150,7 @@ public partial class ChatPopupWindow : Window
         try
         {
             var conversation = Messages.Where(m => !m.IsLocalOnly).Select(m => m.Message).ToList();
-            var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation);
+            var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation, _sessionId);
             Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft)));
         }
         catch (Exception ex)

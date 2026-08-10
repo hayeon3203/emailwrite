@@ -38,14 +38,41 @@ internal static class DraftPromptBuilder
         "\nFrom:",
     ];
 
+    /// <summary>
+    /// Which pair of prompts a turn runs under. There is no switch and no keyword: Outlook either
+    /// had a mail or it did not, and that answer is already known before the model is asked
+    /// anything. Two separate prompt sets rather than one prompt with conditional lines — at 2.3B
+    /// the draft body is what degrades when the instructions grow, so the mail path keeps exactly
+    /// the wording it has today.
+    /// </summary>
+    public static (string System, IReadOnlyList<(ChatRole Role, string Text)> Examples) PromptFor(
+        EmailContext? context) =>
+        context == null ? (FreeSystemPrompt, FreeExampleTurns) : (SystemPrompt, ExampleTurns);
+
     public const string SystemPrompt = """
         당신은 사용자가 Outlook에서 받은 메일에 대해, 메신저(카카오톡/슬랙 등)로 보낼 답장 초안을 작성하는 어시스턴트입니다.
         초안은 메일을 '받은' 사용자가 '발신자에게' 보내는 답장입니다. 메일 문장을 그대로 되풀이하지 말고, 요청에 대한 사용자의 응답을 쓰세요.
         사용자가 "답장에 담을 내용"을 알려주면, 그 내용만 자연스러운 문장으로 옮기세요. 거기 없는 약속·일정·수치는 절대 지어내지 마세요.
-        이메일 형식(인사말, 서명 등)이 아니라 짧고 자연스러운 메신저 말투로 작성하세요. 2~3문장이면 충분합니다.
+        받는 사람은 상사나 윗사람입니다. 항상 정중한 존댓말로 쓰되, 이메일 형식(인사말, 서명 등)은 넣지 말고 메신저로 보낼 짧은 메시지로 작성하세요. 2~3문장이면 충분합니다.
         초안은 반드시 원본 메일과 같은 언어로 작성하세요. 한국어 메일에는 한국어로 답하세요.
         사용자가 이후 대화에서 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 출력하세요.
         설명이나 머리말 없이 답장 본문만 출력하세요.
+        """;
+
+    /// <summary>
+    /// The same job with the mail taken away: no sender to answer, no incoming text to avoid
+    /// echoing, no original language to match. Every line of <see cref="SystemPrompt"/> that
+    /// exists because of the mail is simply absent here rather than reworded, which makes this
+    /// the easier of the two tasks for a small model — what is left is "turn these points into a
+    /// message", with nothing to confuse it about who is speaking to whom.
+    /// </summary>
+    public const string FreeSystemPrompt = """
+        당신은 사용자가 메신저(카카오톡/슬랙 등)로 보낼 메시지 초안을 대신 작성하는 어시스턴트입니다.
+        사용자가 알려준 내용만 자연스러운 문장으로 옮기세요. 거기 없는 약속·일정·수치는 절대 지어내지 마세요.
+        받는 사람은 상사나 윗사람입니다. 항상 정중한 존댓말로 쓰되, 이메일 형식(인사말, 서명 등)은 넣지 말고 메신저로 보낼 짧은 메시지로 작성하세요. 2~3문장이면 충분합니다.
+        초안은 사용자가 쓴 언어로 작성하세요.
+        사용자가 이후 대화에서 톤이나 내용 수정을 요청하면, 알겠다고 대답하지 말고 수정한 초안 전문을 다시 출력하세요.
+        설명이나 머리말 없이 메시지 본문만 출력하세요.
         """;
 
     /// <summary>
@@ -73,13 +100,29 @@ internal static class DraftPromptBuilder
             // The example carries an intent too, so the model sees that the draft is built from
             // what the user asked for — not invented from the mail alone.
             "내일까지 검토해서 의견 정리해서 준다고, 수요일 전에는 회신한다고")),
-        (ChatRole.Assistant, "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드릴게요. 수요일 전에는 회신 드리겠습니다."),
-        (ChatRole.User, "좀 더 친근한 말투로 바꿔줘."),
+        (ChatRole.Assistant, "계약서 확인했습니다. 내일까지 검토해서 의견 정리해 드리겠습니다. 수요일 전에는 회신드리겠습니다."),
+        // Not "친근하게": the recipient is the user's superior, so a revision request that asks
+        // for casual register would teach the model to leave the polite one behind. "부드럽게"
+        // moves the text just as far without changing who it is being written to.
+        (ChatRole.User, "조금 더 부드럽게 바꿔줘."),
         // Rewritten end to end, not just at the sentence endings: with a timid example — one
         // verb softened, everything else identical — the model matched that degree of change and
         // handed back the draft verbatim on most revision turns. The example has to show how far
-        // "친근하게" is meant to move the text.
-        (ChatRole.Assistant, "계약서 봤어요! 내일까지 훑어보고 의견 정리해서 드릴게요. 수요일 전에는 꼭 회신 드릴게요."),
+        // a tone request is meant to move the text.
+        (ChatRole.Assistant, "네, 계약서 잘 받았습니다. 내일까지 꼼꼼히 살펴보고 의견 정리해서 전달드리겠습니다. 늦어도 수요일 전에는 회신드리도록 하겠습니다."),
+    };
+
+    /// <summary>
+    /// <see cref="ExampleTurns"/> for the no-mail case, kept to the same two rounds and the same
+    /// second-round wording. The revision round is not optional here either: it is what stops the
+    /// model from answering "네, 그렇게 해드릴게요." to a tone change instead of redrafting.
+    /// </summary>
+    public static readonly IReadOnlyList<(ChatRole Role, string Text)> FreeExampleTurns = new[]
+    {
+        (ChatRole.User, BuildFreeTurn("내일 저녁 약속 못 갈 것 같다고, 다음 주 화요일로 미루자고")),
+        (ChatRole.Assistant, "죄송합니다, 내일 저녁 약속은 참석이 어려울 것 같습니다. 혹시 다음 주 화요일로 미뤄주실 수 있을까요?"),
+        (ChatRole.User, "조금 더 부드럽게 바꿔줘."),
+        (ChatRole.Assistant, "내일 저녁 약속 관련해서 말씀드립니다. 일정이 여의치 않아 참석이 어려울 것 같습니다. 괜찮으시다면 다음 주 화요일로 미뤄주시면 감사하겠습니다."),
     };
 
     /// <summary>
@@ -87,17 +130,28 @@ internal static class DraftPromptBuilder
     /// message says what the reply should contain, and it is folded into the same turn as the mail
     /// rather than sent as a message of its own: two user turns in a row is not a shape the chat
     /// templates (or the Anthropic API) expect, and the points to cover belong right next to the
-    /// mail they are about.
+    /// mail they are about. With no mail (<paramref name="context"/> null) that first message is
+    /// all there is, and it becomes the opening turn on its own.
     /// </summary>
     public static (string OpeningTurn, IReadOnlyList<ChatMessage> Following) BuildTurns(
-        EmailContext context, IReadOnlyList<ChatMessage> conversation)
+        EmailContext? context, IReadOnlyList<ChatMessage> conversation)
     {
         var intent = conversation.Count > 0 && conversation[0].Role == ChatRole.User
             ? conversation[0].Text
             : null;
         var rest = intent != null ? conversation.Skip(1).ToList() : conversation;
-        return (BuildContextTurn(context, intent), rest);
+        var opening = context == null ? BuildFreeTurn(intent) : BuildContextTurn(context, intent);
+        return (opening, rest);
     }
+
+    /// <summary>The opening turn with no mail behind it: just what the user wants said.</summary>
+    private static string BuildFreeTurn(string? intent) =>
+        $"""
+        ## 보낼 메시지에 담을 내용
+        {intent}
+
+        위 내용으로 보낼 메신저 메시지 초안을 만들어줘. 담을 내용에 없는 약속이나 사실은 지어내지 마.
+        """;
 
     /// <summary>
     /// The opening user turn: the Outlook context as quoted data, then the instruction.
