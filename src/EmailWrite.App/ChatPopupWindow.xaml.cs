@@ -198,6 +198,35 @@ public partial class ChatPopupWindow : Window
         await GenerateAndAppendDraftAsync();
     }
 
+    /// <summary>
+    /// Throws this draft away and writes another from the same points. Measured on this model, a
+    /// quarter of drafts come back unusable while the content behind them was fine — so rerolling
+    /// is the ordinary repair, and until now it meant retyping. Restart (<c>↻</c>) is the other
+    /// thing: it clears the conversation and re-reads Outlook.
+    ///
+    /// Everything from this bubble onward goes, so a reroll partway up a long thread also drops
+    /// the turns that followed from it — they were answers to a draft that no longer exists.
+    /// </summary>
+    private async void RegenerateMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (IsBusy || sender is not Button { Tag: ChatMessageViewModel clicked })
+            return;
+
+        var index = Messages.IndexOf(clicked);
+        if (index < 0)
+            return;
+
+        while (Messages.Count > index)
+        {
+            Messages.RemoveAt(Messages.Count - 1);
+        }
+
+        // The KV cache still holds the turns just removed, and it can only be appended to. A new
+        // session id makes the generator rebuild from the shortened conversation instead.
+        _sessionId++;
+        await GenerateAndAppendDraftAsync();
+    }
+
     private async void CopyMessage_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string text } button)

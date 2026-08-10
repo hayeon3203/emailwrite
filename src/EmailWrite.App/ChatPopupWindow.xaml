@@ -163,20 +163,40 @@
                                                     </Style>
                                                 </TextBlock.Style>
                                             </TextBlock>
-                                            <Button Content="복사" Click="CopyMessage_Click" Tag="{Binding Text}"
-                                                    FontSize="10" Padding="4,1" Margin="0,4,0,-2"
-                                                    HorizontalAlignment="Right">
-                                                <Button.Style>
-                                                    <Style TargetType="Button" BasedOn="{StaticResource FlatIconButtonStyle}">
-                                                        <Setter Property="Foreground" Value="#FF6A6A6A" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding IsAssistant}" Value="True">
-                                                                <Setter Property="Foreground" Value="#FFE8EEFF" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Button.Style>
-                                            </Button>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                                        Margin="0,4,0,-2">
+                                                <!-- Rerolling the same points is the common repair:
+                                                     a quarter of drafts come back unusable and the
+                                                     content that produced them was fine. -->
+                                                <Button Content="다시" Click="RegenerateMessage_Click" Tag="{Binding}"
+                                                        FontSize="10" Padding="4,1" Margin="0,0,6,0">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource FlatIconButtonStyle}">
+                                                            <Setter Property="Foreground" Value="#FFE8EEFF" />
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding CanRegenerate}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+
+                                                <Button Content="복사" Click="CopyMessage_Click" Tag="{Binding Text}"
+                                                        FontSize="10" Padding="4,1">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource FlatIconButtonStyle}">
+                                                            <Setter Property="Foreground" Value="#FF6A6A6A" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsAssistant}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#FFE8EEFF" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                            </StackPanel>
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

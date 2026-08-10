@@ -15,4 +15,10 @@ public sealed class ChatMessageViewModel(ChatMessage message, bool isLocalOnly =
     /// would otherwise be asked to continue from a turn it never produced.
     /// </summary>
     public bool IsLocalOnly { get; } = isLocalOnly;
+
+    /// <summary>
+    /// Whether this bubble offers "다시". Only what the model wrote can be rerolled — the popup's
+    /// own lines were never generated, and the user's own words are not ours to throw away.
+    /// </summary>
+    public bool CanRegenerate => IsAssistant && !IsLocalOnly;
 }

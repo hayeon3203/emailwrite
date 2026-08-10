@@ -99,15 +99,32 @@ public partial class MainWindow : Window
             _ = _chatPopup.OpenAsync();
     }
 
+    /// <summary>
+    /// Centred over the avatar, then pulled back inside the work area. Centring alone put the
+    /// popup 76px off the right edge in the default position — the avatar sits 24px from the
+    /// right, and a 320-wide popup centred on a 120-wide avatar reaches 100px further right than
+    /// the avatar does. The same applies upward once the avatar has been dragged near the top.
+    /// </summary>
     private void PositionChatPopupAboveAvatar()
     {
         if (_chatPopup == null)
             return;
 
         const double gap = 12;
-        _chatPopup.Left = Left + (Width / 2) - (_chatPopup.Width / 2);
-        _chatPopup.Top = Top - _chatPopup.Height - gap;
+        var workArea = SystemParameters.WorkArea;
+        _chatPopup.Left = KeepInside(
+            Left + (Width / 2) - (_chatPopup.Width / 2), _chatPopup.Width, workArea.Left, workArea.Right);
+        _chatPopup.Top = KeepInside(
+            Top - _chatPopup.Height - gap, _chatPopup.Height, workArea.Top, workArea.Bottom);
     }
+
+    /// <summary>
+    /// Nudges a window edge back between <paramref name="min"/> and <paramref name="max"/>.
+    /// Not Math.Clamp: that throws when the window is larger than the space it has to fit in,
+    /// which is a screen small enough to be someone's problem but not a reason to crash.
+    /// </summary>
+    private static double KeepInside(double start, double length, double min, double max) =>
+        Math.Max(min, Math.Min(start, max - length));
 
     private void PositionAtBottomRight()
     {
