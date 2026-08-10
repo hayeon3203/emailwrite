@@ -194,10 +194,35 @@
                 </Grid.ColumnDefinitions>
 
                 <Border Grid.Column="0" CornerRadius="16" Background="#FFF0F0F3">
-                    <TextBox x:Name="InputBox" BorderThickness="0" Background="Transparent"
-                             Padding="12,8" FontSize="13" VerticalContentAlignment="Center"
-                             TextWrapping="Wrap" AcceptsReturn="False"
-                             KeyDown="InputBox_KeyDown" />
+                    <Grid>
+                        <TextBox x:Name="InputBox" BorderThickness="0" Background="Transparent"
+                                 Padding="12,8" FontSize="13" VerticalContentAlignment="Center"
+                                 TextWrapping="Wrap" AcceptsReturn="False"
+                                 KeyDown="InputBox_KeyDown" />
+
+                        <!-- An empty box gave no clue what belongs in it, and "메신저 답장 써줘"
+                             is the natural thing to type at a chat prompt. That is a request, not
+                             content: with nothing to draft from, the model answers *about*
+                             drafting ("네, 작성 방법 알려드릴게요"), and that reply then sits in
+                             the conversation and turns every later turn into a refusal. The
+                             example is the cheapest place to stop it — the model cannot be told
+                             to ask for the content instead, which is what M12 already tried
+                             twice. Sits on top of the box and lets clicks through to it. -->
+                        <TextBlock Text="예: 내일까지 검토해서 드린다고" IsHitTestVisible="False"
+                                   Foreground="#FFA8A8AD" FontSize="13"
+                                   Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text, ElementName=InputBox}" Value="">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
                 </Border>
 
                 <Button Grid.Column="1" x:Name="SendButton" Content="&#x27A4;" Width="34" Height="34"
