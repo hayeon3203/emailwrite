@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.Intrinsics.X86;
 using LLama;
 using LLama.Common;
 using LLama.Sampling;
@@ -7,10 +9,9 @@ using EmailWrite.Core.OutlookIntegration;
 namespace EmailWrite.Core.Drafting;
 
 /// <summary>
-/// Runs draft generation locally via LLamaSharp against a Qwen3-1.7B GGUF, downloaded
-/// on demand into a machine-wide model cache. M8's minimal slice: just enough
-/// to unblock M6/M7 testing without an Anthropic API key — mode-switch UI, custom model
-/// URLs, and proper minimum-spec detection are M9.
+/// Runs draft generation locally via LLamaSharp against a Mi:dm-2.0-Mini GGUF, downloaded
+/// on demand into a machine-wide model cache. Mode-switch UI and custom model URLs are
+/// still M9; the minimum spec (AVX2) is checked here.
 /// </summary>
 public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 {
@@ -40,6 +41,18 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     // prefix comparison breaks on a stray newline and silently falls back to a full prefill.
     private LLamaContext? _context;
     private InteractiveExecutor? _executor;
+    // Read off the loaded model's own chat template once, never assumed. Null means the probe
+    // could not make sense of it, and every turn then pays a full prefill rather than guessing.
+    private TurnMarkers? _markers;
+    // Which native CPU kernel llama.cpp actually loaded. Null until the weights are in.
+    private string? _kernel;
+
+    /// <summary>
+    /// What the probe found, for DraftProbe to print when a new .gguf is being vetted — a model
+    /// whose markers come back null still works, but silently at one full prefill per turn.
+    /// Null until the weights have been loaded.
+    /// </summary>
+    internal TurnMarkers? Markers => _markers;
     // Which conversation the cache belongs to. -1 means "nothing usable in there". This used to
     // compare the EmailContext by reference, which worked only as long as there was always a mail:
     // with free-writing both sides are null, null equals null, and a brand new conversation would
@@ -47,6 +60,22 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     private int _sessionId = -1;
     private int _fedMessageCount;
     private bool _kvEndsAtTurnEnd;
+
+    /// <summary>
+    /// Where the "내려받는 중 42%" line goes while the model is being fetched. The first run on a
+    /// fresh PC downloads 1.4GB before it can answer anything, and with nothing reporting it the
+    /// popup sits on its typing indicator for minutes — indistinguishable from a hang. An empty
+    /// report means "done, put the default text back".
+    /// </summary>
+    public IProgress<string>? Progress { get; set; }
+
+    /// <summary>
+    /// What the last run actually spent its time on: prefill (time to the first token) against
+    /// decode (how many tokens came out). A single wall-clock number can't tell a long mail from a
+    /// draft that ran to <c>MaxTokens</c>, and those want opposite fixes — the app was reported
+    /// slower than every probe measurement with no way to see which one it was.
+    /// </summary>
+    public string? LastStats { get; private set; }
 
     public LocalDraftGenerator()
     {
@@ -73,13 +102,26 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         int sessionId = 0,
         CancellationToken cancellationToken = default)
     {
+        // The bundled llama.cpp backends include a noavx build, but every measurement behind the
+        // model choice was taken on AVX2 and the fallback is slow enough to be unusable for a
+        // draft you wait on. Checked before anything else so a colleague on an old PC gets told
+        // what is wrong, rather than a 1.4GB download followed by a native load failure.
+        if (!Avx2.IsSupported)
+        {
+            return "이 PC의 CPU는 AVX2를 지원하지 않아 로컬 모델을 쓸 수 없어요. "
+                 + "ANTHROPIC_API_KEY 환경변수를 설정하면 API 모드로 쓸 수 있어요.";
+        }
+
         try
         {
             await EnsureWeightsAsync(cancellationToken);
+            // Whatever the download/load reported is stale now: generation is next.
+            Progress?.Report(string.Empty);
         }
         catch (Exception ex)
         {
-            return $"로컬 모델을 준비하는 중 오류가 발생했어요(AVX2 미지원 CPU이거나 다운로드에 실패했을 수 있어요): {ex.Message}";
+            Progress?.Report(string.Empty);
+            return $"로컬 모델을 준비하는 중 오류가 발생했어요(다운로드에 실패했을 수 있어요): {ex.Message}";
         }
 
         await _inferLock.WaitAsync(cancellationToken);
@@ -89,7 +131,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             // grown; a reopened popup arrives with a new session id and starts over. The mail is
             // fixed when the session opens, so the id alone settles both questions.
             string toFeed;
-            if (_executor != null && _sessionId == sessionId && conversation.Count > _fedMessageCount)
+            if (_executor != null && _markers != null && _sessionId == sessionId && conversation.Count > _fedMessageCount)
             {
                 toFeed = BuildContinuation(conversation.Skip(_fedMessageCount));
             }
@@ -103,7 +145,9 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             var inferenceParams = new InferenceParams
             {
                 MaxTokens = 512,
-                AntiPrompts = new List<string> { "<|im_end|>", "<|im_start|>" },
+                // The model's own turn-end string, not a guessed one. This used to be ChatML's
+                // "<|im_end|>", which Mi:dm never emits — the anti-prompt simply never fired.
+                AntiPrompts = _markers == null ? new List<string>() : new List<string> { _markers.TurnEnd },
             };
 
             if (ReadTemperature() is { } temperature)
@@ -112,18 +156,33 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             }
 
             var text = new System.Text.StringBuilder();
+            var watch = Stopwatch.StartNew();
+            var prefill = TimeSpan.Zero;
+            var tokens = 0;
             await foreach (var token in _executor!.InferAsync(toFeed, inferenceParams, cancellationToken))
             {
+                if (tokens++ == 0)
+                {
+                    prefill = watch.Elapsed;
+                }
+
                 text.Append(token);
             }
+
+            // 512 is MaxTokens: seeing it here means the model never emitted its turn-end and the
+            // draft was cut off, which costs the whole cap in decode time.
+            LastStats = $"커널 {_kernel} · 프리필 {prefill.TotalSeconds:F1}s · {tokens}토큰 "
+                      + $"{tokens / Math.Max(0.1, (watch.Elapsed - prefill).TotalSeconds):F1}t/s "
+                      + $"· 프롬프트 {toFeed.Length}자";
 
             // The cache now also holds the reply just generated, which the caller will hand back
             // as the next conversation entry — hence +1.
             var raw = text.ToString();
             _fedMessageCount = conversation.Count + 1;
-            _kvEndsAtTurnEnd = raw.TrimEnd().EndsWith("<|im_end|>", StringComparison.Ordinal);
+            _kvEndsAtTurnEnd = _markers != null
+                && raw.TrimEnd().EndsWith(_markers.TurnEnd.TrimEnd(), StringComparison.Ordinal);
 
-            var result = StripThinking(StripChatMarkers(raw));
+            var result = StripThinking(StripTurnMarkers(raw, _markers));
             return string.IsNullOrWhiteSpace(result) ? "응답을 받지 못했어요." : result;
         }
         catch (Exception ex)
@@ -159,16 +218,32 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     }
 
     /// <summary>
-    /// Cuts the reply at the first ChatML control token. StatelessExecutor swallowed the
-    /// anti-prompt it stopped on; InteractiveExecutor streams it through, so without this the
-    /// draft shown to the user ends in a literal "&lt;|im_end|&gt;". Only the display copy is
-    /// trimmed — the raw text stays in _fedPrompt, because those tokens really are in the KV
-    /// cache and the next turn's prefix has to account for them.
+    /// Cuts the reply at the first control string the model emitted. StatelessExecutor swallowed
+    /// the anti-prompt it stopped on; InteractiveExecutor streams it through, so without this the
+    /// draft shown to the user can end in a literal turn-end marker. Only the display copy is
+    /// trimmed — the raw text is what the KV cache holds, and the next turn's continuation has to
+    /// account for it.
+    ///
+    /// The markers come from the loaded model rather than a hardcoded family: this was ChatML for
+    /// as long as the prototype ran Qwen, and kept being ChatML after the switch to Mi:dm, which
+    /// renders Llama-3 headers and has no "&lt;|im_start|&gt;" in its vocabulary at all.
     /// </summary>
-    internal static string StripChatMarkers(string raw)
+    internal static string StripTurnMarkers(string raw, TurnMarkers? markers)
     {
-        foreach (var marker in new[] { "<|im_end|>", "<|im_start|>" })
+        if (markers == null)
         {
+            return raw;
+        }
+
+        foreach (var marker in new[] { markers.TurnEnd, markers.UserOpen, markers.AssistantOpen })
+        {
+            // A marker that came back empty would make IndexOf return 0 and take the whole reply
+            // with it.
+            if (marker.Length == 0)
+            {
+                continue;
+            }
+
             var index = raw.IndexOf(marker, StringComparison.Ordinal);
             if (index >= 0)
             {
@@ -233,12 +308,129 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 BatchThreads = threads,
             };
             _modelParams = modelParams;
+            // Reading 1.4GB off disk is several seconds on its own, and on a first run it lands
+            // right after the download — so the line has to change, or it reads as a stuck 100%.
+            Progress?.Report("모델 불러오는 중…");
             _weights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
+            _kernel = DescribeKernel();
+            _markers = ProbeMarkers();
         }
         finally
         {
             _initLock.Release();
         }
+    }
+
+    /// <summary>
+    /// Which ggml-cpu.dll the process ended up with, as folder name + size — nothing reported this
+    /// before, and that is the only reason the app ran on the noavx kernel unnoticed for weeks
+    /// (prefill 422s against 50s on avx2). <see cref="Avx2"/>.IsSupported cannot stand in for it:
+    /// it answers what the CPU can do, not which build got loaded. The folder name says it when the
+    /// backend layout survived the build; the size says it when it did not, because a flattened
+    /// output leaves the file sitting next to the exe under no telling name
+    /// (noavx 427K / avx 508K / avx2 544K / avx512 620K).
+    /// </summary>
+    private static string DescribeKernel()
+    {
+        foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
+        {
+            if (!string.Equals(module.ModuleName, "ggml-cpu.dll", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var folder = Path.GetFileName(Path.GetDirectoryName(module.FileName)) ?? "?";
+            return $"{folder} {new FileInfo(module.FileName).Length / 1024}K";
+        }
+
+        return "확인 불가";
+    }
+
+    /// <summary>
+    /// How this model opens a user turn, opens an assistant turn, and ends one. Every string is
+    /// taken verbatim out of the model's own rendered template, whitespace included, so appending
+    /// them reproduces exactly what <see cref="LLamaTemplate"/> would have produced.
+    /// </summary>
+    internal sealed record TurnMarkers(string UserOpen, string AssistantOpen, string TurnEnd);
+
+    // Control characters, so they cannot collide with anything a chat template emits around them.
+    internal const string ProbeUser = "\u0001PU\u0001";
+    internal const string ProbeAssistant = "\u0002PA\u0002";
+    internal const string ProbeUser2 = "\u0003PU2\u0003";
+
+    private string Render(bool addAssistant, params (string Role, string Text)[] messages)
+    {
+        var template = new LLamaTemplate(_weights!) { AddAssistant = addAssistant };
+        foreach (var (role, text) in messages)
+        {
+            template.Add(role, text);
+        }
+
+        return System.Text.Encoding.UTF8.GetString(template.Apply());
+    }
+
+    /// <summary>
+    /// Renders three throwaway conversations through the model's template and reads the turn
+    /// delimiters back out of them. Three rather than one because a single render cannot say where
+    /// the preamble (bos token, date line, default system block) ends and the first user header
+    /// begins — only a pair that differs by exactly one turn can.
+    ///
+    /// Deliberately never renders two user turns in a row to get there: some templates reject a
+    /// conversation that does not alternate, and a probe that throws on those models would take
+    /// the whole generator down at load time.
+    /// </summary>
+    private TurnMarkers? ProbeMarkers()
+    {
+        try
+        {
+            return ParseMarkers(
+                Render(false, ("user", ProbeUser)),
+                Render(true, ("user", ProbeUser)),
+                Render(true, ("user", ProbeUser), ("assistant", ProbeAssistant), ("user", ProbeUser2)));
+        }
+        catch (Exception)
+        {
+            // Continuation is an optimisation; losing it costs a full prefill per turn, which is
+            // what this class did before the KV cache existed. Feeding the model markers invented
+            // from a failed parse is the thing actually worth avoiding.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pure string work, kept separate from <see cref="ProbeMarkers"/> so it can be checked without
+    /// loading 1.3GB of weights. Given
+    /// <paramref name="userOnly"/>   = preamble + userOpen + PU + turnEnd,
+    /// <paramref name="userThenGen"/> = the same + assistantOpen, and
+    /// <paramref name="fullRound"/>  = ... + PA + turnEnd + userOpen + PU2 + ...,
+    /// each marker falls out by subtraction.
+    /// </summary>
+    internal static TurnMarkers? ParseMarkers(string userOnly, string userThenGen, string fullRound)
+    {
+        var turnEnd = After(userOnly, ProbeUser);
+        var assistantOpen = After(userThenGen, ProbeUser);
+        var afterAssistant = After(fullRound, ProbeAssistant);
+
+        if (turnEnd.Length == 0
+            || !assistantOpen.StartsWith(turnEnd, StringComparison.Ordinal)
+            || !afterAssistant.StartsWith(turnEnd, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        assistantOpen = assistantOpen[turnEnd.Length..];
+        var rest = afterAssistant[turnEnd.Length..];
+        var userAt = rest.IndexOf(ProbeUser2, StringComparison.Ordinal);
+        if (userAt < 0 || assistantOpen.Length == 0)
+        {
+            return null;
+        }
+
+        return new TurnMarkers(rest[..userAt], assistantOpen, turnEnd);
+    }
+
+    private static string After(string haystack, string needle)
+    {
+        var index = haystack.IndexOf(needle, StringComparison.Ordinal);
+        return index < 0 ? string.Empty : haystack[(index + needle.Length)..];
     }
 
     /// <summary>
@@ -258,60 +450,96 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     }
 
     /// <summary>
-    /// The ChatML the cache still needs in order to continue: close the reply that is already in
+    /// The markup the cache still needs in order to continue: close the reply that is already in
     /// it (unless generation stopped on the closing token and it went in too), then the new
-    /// messages, then the header that hands the turn back to the model. Written out by hand
-    /// rather than via <see cref="LLamaTemplate"/>, which can only render a conversation from the
-    /// system prompt down — the whole point here is to render only the tail.
+    /// messages, then the header that hands the turn back to the model. Assembled here rather than
+    /// via <see cref="LLamaTemplate"/>, which can only render a conversation from the system prompt
+    /// down — the whole point here is to render only the tail. The pieces are still the model's
+    /// own, taken from <see cref="ProbeMarkers"/> rather than assumed to be ChatML.
     /// </summary>
     private string BuildContinuation(IEnumerable<ChatMessage> newMessages)
     {
+        var markers = _markers!;
         var sb = new System.Text.StringBuilder();
         if (!_kvEndsAtTurnEnd)
         {
-            sb.Append("<|im_end|>");
+            sb.Append(markers.TurnEnd);
         }
 
-        sb.Append('\n');
         foreach (var message in newMessages)
         {
-            sb.Append("<|im_start|>")
-              .Append(message.Role == ChatRole.User ? "user" : "assistant")
-              .Append('\n')
+            sb.Append(message.Role == ChatRole.User ? markers.UserOpen : markers.AssistantOpen)
               .Append(message.Text)
-              .Append("<|im_end|>\n");
+              .Append(markers.TurnEnd);
         }
 
-        return sb.Append("<|im_start|>assistant\n").ToString();
+        return sb.Append(markers.AssistantOpen).ToString();
     }
 
     private async Task DownloadModelAsync(CancellationToken cancellationToken)
     {
         var tempPath = _modelPath + ".download";
         using var http = new HttpClient();
+        // No timeout: HttpClient's default 100s applies to the whole response, and 1.4GB over an
+        // office link does not fit in it. ResponseHeadersRead already means the body streams.
+        http.Timeout = Timeout.InfiniteTimeSpan;
         using var response = await http.GetAsync(
             ModelDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
+        var total = response.Content.Headers.ContentLength;
+        // Hand-rolled instead of CopyToAsync purely to count bytes. Reported every 8MB rather than
+        // every chunk: ~175 updates over the whole file instead of ~18,000.
+        const int ReportEvery = 8 * 1024 * 1024;
+        var buffer = new byte[81920];
+        long read = 0, reportedAt = 0;
+
         await using (var fileStream = File.Create(tempPath))
         await using (var httpStream = await response.Content.ReadAsStreamAsync(cancellationToken))
         {
-            await httpStream.CopyToAsync(fileStream, cancellationToken);
+            Progress?.Report(FormatDownloadProgress(0, total));
+            int count;
+            while ((count = await httpStream.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                await fileStream.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                read += count;
+                if (read - reportedAt >= ReportEvery)
+                {
+                    reportedAt = read;
+                    Progress?.Report(FormatDownloadProgress(read, total));
+                }
+            }
         }
 
         File.Move(tempPath, _modelPath);
     }
 
     /// <summary>
+    /// The download line. Hugging Face does send Content-Length, but a proxy or a chunked
+    /// re-encode can drop it, and a progress line that divides by null is a worse first run than
+    /// one that just counts up.
+    /// </summary>
+    internal static string FormatDownloadProgress(long read, long? total)
+    {
+        var readGb = read / (1024.0 * 1024 * 1024);
+        if (total is not > 0)
+        {
+            return $"모델 내려받는 중… {readGb:0.0}GB";
+        }
+
+        return $"모델 내려받는 중… {read * 100 / total.Value}% ({readGb:0.0}/{total.Value / (1024.0 * 1024 * 1024):0.0}GB)";
+    }
+
+    /// <summary>
     /// Renders the system prompt and full visible conversation through the model's own
-    /// chat template (Qwen2.5's ChatML), mirroring <see cref="ClaudeDraftGenerator"/>'s
+    /// chat template — whatever that model's is — mirroring <see cref="ClaudeDraftGenerator"/>'s
     /// "resend the whole history every turn" approach instead of keeping session state.
     /// </summary>
     private string BuildPrompt(EmailContext? emailContext, IReadOnlyList<ChatMessage> conversation)
     {
-        // AddAssistant appends the "<|im_start|>assistant" header the model needs to start
-        // its turn. It defaults to false, and without it generation trips the "<|im_start|>"
-        // anti-prompt on the very first token and returns nothing.
+        // AddAssistant appends the header this model uses to open an assistant turn — the same
+        // string ProbeMarkers reads back as TurnMarkers.AssistantOpen. It defaults to false, and
+        // without it the model is handed a conversation that never gives it the turn.
         // "/no_think" is Qwen3's soft switch for its reasoning mode — thinking triples latency
         // (~43s vs ~13s) for a two-sentence draft. It means nothing to other models, so it's
         // only appended for Qwen to keep a stray token out of everyone else's system prompt.

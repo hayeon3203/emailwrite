@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -21,6 +22,7 @@ namespace EmailWrite.App;
 public partial class ChatPopupWindow : Window
 {
     private readonly IDraftGenerator _draftGenerator;
+    private readonly string _typingText;
     private EmailContext? _emailContext;
     private bool _sessionEnded = true;
     // Bumped on every open so the generator can tell a new conversation from a longer one.
@@ -44,6 +46,16 @@ public partial class ChatPopupWindow : Window
         _draftGenerator = draftGenerator;
         InitializeComponent();
         DataContext = this;
+
+        // Only the local generator has a 1.4GB first run to report on, so this is a type check
+        // rather than something on IDraftGenerator that two implementations would leave empty.
+        // Progress<T> captures this (UI) thread, so the report arrives back on it.
+        _typingText = TypingIndicator.Text;
+        if (draftGenerator is LocalDraftGenerator local)
+        {
+            local.Progress = new Progress<string>(
+                status => TypingIndicator.Text = status.Length == 0 ? _typingText : status);
+        }
     }
 
     /// <summary>
@@ -72,9 +84,11 @@ public partial class ChatPopupWindow : Window
         _sessionId++;
         _sessionEnded = false;
         IsBusy = true;
+        TypingIndicator.Text = _typingText;
         TypingIndicator.Visibility = Visibility.Visible;
         ScrollToBottom();
 
+        var elapsed = Stopwatch.StartNew();
         string? error;
         try
         {
@@ -86,7 +100,7 @@ public partial class ChatPopupWindow : Window
         }
 
         IsBusy = false;
-        TypingIndicator.Visibility = Visibility.Collapsed;
+        ShowElapsed("Outlook", elapsed);
 
         // No mail is no longer a dead end. Nothing was open in Outlook, so there is nothing to
         // reply to — but writing the message is still the part worth doing, so the popup says
@@ -147,11 +161,27 @@ public partial class ChatPopupWindow : Window
         return tcs.Task;
     }
 
+    /// <summary>
+    /// Leaves the last step's wall time in the status line. Reported delay ("every request takes
+    /// five minutes") and measured time (13.6s first turn, 1.9s after) disagree by an order of
+    /// magnitude, and nothing in the app said which was right — so every wait now prints what it
+    /// actually cost, Outlook read included, since that one is a cross-process COM call nobody
+    /// has timed either.
+    /// </summary>
+    private void ShowElapsed(string what, Stopwatch elapsed, string? stats = null)
+    {
+        TypingIndicator.Text = $"{what} {elapsed.Elapsed.TotalSeconds:F1}초"
+                             + (stats == null ? "" : $"  ({stats})");
+        TypingIndicator.Visibility = Visibility.Visible;
+    }
+
     private async Task GenerateAndAppendDraftAsync()
     {
         IsBusy = true;
+        TypingIndicator.Text = _typingText;
         TypingIndicator.Visibility = Visibility.Visible;
         ScrollToBottom();
+        var elapsed = Stopwatch.StartNew();
         try
         {
             var conversation = Messages.Where(m => !m.IsLocalOnly).Select(m => m.Message).ToList();
@@ -169,7 +199,7 @@ public partial class ChatPopupWindow : Window
         finally
         {
             IsBusy = false;
-            TypingIndicator.Visibility = Visibility.Collapsed;
+            ShowElapsed("생성", elapsed, (_draftGenerator as LocalDraftGenerator)?.LastStats);
             ScrollToBottom();
         }
     }

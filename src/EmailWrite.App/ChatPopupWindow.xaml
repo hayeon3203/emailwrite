@@ -205,7 +205,8 @@
                     </ItemsControl>
 
                     <TextBlock x:Name="TypingIndicator" Text="입력 중…" FontSize="11" FontStyle="Italic"
-                               Foreground="#FF9A9A9A" Margin="10,2,0,4" Visibility="Collapsed" />
+                               TextWrapping="Wrap"
+                               Foreground="#FF9A9A9A" Margin="10,2,10,4" Visibility="Collapsed" />
                 </StackPanel>
             </ScrollViewer>
 

@@ -17,4 +17,42 @@
       <Private>true</Private>
     </Reference>
   </ItemGroup>
+
+  <!--
+    Self-contained publish otherwise fails with NETSDK1152: LLamaSharp.Backend.Cpu ships four
+    builds of the same four DLLs (noavx/avx/avx2/avx512), and a RID-specific publish flattens
+    runtimes\<rid>\native\* into the output root, where all four collide on one name. Keeping the
+    subfolders is also what makes them work — LLamaSharp probes that exact layout at startup to
+    pick a backend, which is how the ordinary build has always run.
+    Not solved with ErrorOnDuplicatePublishOutputFiles=false: that keeps whichever file wins and
+    silently ships one arbitrary backend. Here rather than in the app project for the same reason
+    as the office reference above — it has to apply to every exe that publishes, DraftProbe
+    included, since that is what verifies the layout without clicking through the UI.
+  -->
+  <Target Name="KeepLlamaBackendSubfolders" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.NuGetPackageId)' == 'LLamaSharp.Backend.Cpu'"
+                             RelativePath="runtimes\$(RuntimeIdentifier)\native\$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('%(ResolvedFileToPublish.FullPath)'))))\%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    The same flattening happens on plain `build` with -r win-x64, where it is worse: publish at
+    least fails loudly on the name collision (NETSDK1152), build just lets the last copy win and
+    the app silently ran on the noavx kernel for weeks — 422s of prefill against 50s on avx2.
+    Nothing catches it either: LLamaSharp picks its backend by looking for that folder layout, and
+    with no layout it loads whatever single copy sits next to the exe, while the Avx2.IsSupported
+    check in LocalDraftGenerator only ever asked what the CPU can do, not what got loaded.
+    RID-less builds already come through with DestinationSubDirectory set (that is why DraftProbe
+    was always on avx2), so this only restores it for the RID-specific case.
+  -->
+  <Target Name="KeepLlamaBackendSubfoldersOnBuild" AfterTargets="ResolveReferences"
+          Condition="'$(RuntimeIdentifier)' != ''">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Update="@(ReferenceCopyLocalPaths)"
+                               Condition="'%(ReferenceCopyLocalPaths.NuGetPackageId)' == 'LLamaSharp.Backend.Cpu'"
+                               DestinationSubDirectory="runtimes\$(RuntimeIdentifier)\native\$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('%(ReferenceCopyLocalPaths.FullPath)'))))\" />
+    </ItemGroup>
+  </Target>
 </Project>
