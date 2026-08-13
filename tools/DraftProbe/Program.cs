@@ -254,6 +254,22 @@ if (args.Contains("--selftest"))
     Check(!LocalDraftGenerator.FormatDownloadProgress(gb, null).Contains("%"), "길이를 모르는데 퍼센트를 표시함");
     Check(LocalDraftGenerator.FormatDownloadProgress(gb, 0).Contains("1.0GB"), "길이가 0일 때 받은 양이 안 나옴");
 
+    // 키 저장. 팝업에서 붙여넣은 키가 다음 실행에 안 읽히면 배포된 PC에선 고칠 방법이 없고,
+    // 화면에는 "저장했는데 안 먹는다"로만 보인다. 진짜 파일에 쓰지만 이름이 실제 키와 겹치지
+    // 않고 마지막에 지우므로 남는 게 없다.
+    const string probeKey = "EMAILWRITE_SELFTEST_KEY";
+    ApiKeys.Set(probeKey, "sk-테스트-1234");
+    Check(ApiKeys.Get(probeKey) == "sk-테스트-1234", "저장한 키가 그대로 안 읽힘");
+    ApiKeys.Set(probeKey, "");
+    Check(ApiKeys.Get(probeKey) == null, "지운 키가 계속 읽힘");
+    // 파일에 없으면 환경변수로 떨어져야 한다 — 기존 설치가 이 경로로 계속 돈다.
+    Environment.SetEnvironmentVariable(probeKey, "env-키");
+    Check(ApiKeys.Get(probeKey) == "env-키", "파일에 없는데 환경변수를 안 봄");
+    // 그리고 파일이 있으면 환경변수를 이겨야 한다 (만료된 변수가 새 키를 덮는 사고 방지).
+    ApiKeys.Set(probeKey, "파일-키");
+    Check(ApiKeys.Get(probeKey) == "파일-키", "환경변수가 저장된 키를 이김");
+    ApiKeys.Set(probeKey, "");
+
     Console.WriteLine("selftest OK");
     return;
 }

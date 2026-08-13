@@ -112,12 +112,88 @@ public partial class ChatPopupWindow : Window
         }
 
         _draftGenerator = generator;
+        UpdateApiKeyPrompt(tag);
 
         // The local KV cache holds this conversation as *it* generated it, and a turn that came
         // back from an API is not in there — appending to it would feed the model a continuation
         // of a prefix that is missing turns. A new session id makes the next local turn prefill
         // the visible conversation from scratch instead.
         _sessionId++;
+    }
+
+    /// <summary>
+    /// Which key the picked backend needs, or null for the local model, which needs none. The
+    /// names are the environment variables' — <see cref="ApiKeys"/> reads those as the fallback,
+    /// so an existing setup keeps working and never sees this row.
+    /// </summary>
+    private static string? KeyNameFor(string tag) => tag switch
+    {
+        "solar" => SolarDraftGenerator.KeyName,
+        "claude" => ClaudeDraftGenerator.KeyName,
+        _ => null,
+    };
+
+    private void UpdateApiKeyPrompt(string tag)
+    {
+        var keyName = KeyNameFor(tag);
+        if (keyName == null || ApiKeys.Get(keyName) != null)
+        {
+            ApiKeyRow.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var backend = (BackendCombo.SelectedItem as ComboBoxItem)?.Content as string ?? tag;
+        ApiKeyLabel.Text = $"{backend} API 키를 붙여넣고 저장하세요. 이 PC에 암호화해 저장되고, 다음부터는 안 물어봐요.";
+        ApiKeyRow.Visibility = Visibility.Visible;
+        ApiKeyBox.Focus();
+    }
+
+    /// <summary>
+    /// Puts the key row back after the server refused the stored key. Without this a mistyped or
+    /// revoked key is unreachable — the row only appears when there is *no* key, so a bad one
+    /// would need an environment variable or a rebuild to replace, on somebody else's PC.
+    /// Matched on the status code both backends put in their message rather than a new failure
+    /// channel on IDraftGenerator, which two of the three implementations would leave empty.
+    /// </summary>
+    private void OfferKeyReentryIfRejected(string reply)
+    {
+        if (BackendCombo.SelectedItem is not ComboBoxItem { Tag: string tag } || KeyNameFor(tag) == null)
+            return;
+
+        if (!reply.Contains("401") && !reply.Contains("403"))
+            return;
+
+        ApiKeyLabel.Text = "키가 거부됐어요(401/403). 다시 붙여넣고 저장해주세요.";
+        ApiKeyRow.Visibility = Visibility.Visible;
+    }
+
+    private void ApiKeyBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            SaveApiKey();
+        }
+    }
+
+    private void ApiKeySaveButton_Click(object sender, RoutedEventArgs e) => SaveApiKey();
+
+    private void SaveApiKey()
+    {
+        if (BackendCombo.SelectedItem is not ComboBoxItem { Tag: string tag }
+            || KeyNameFor(tag) is not { } keyName
+            || ApiKeyBox.Password.Trim() is not { Length: > 0 } key)
+        {
+            return;
+        }
+
+        ApiKeys.Set(keyName, key);
+        // Not kept in the box: it is on screen until the popup closes otherwise, and the next
+        // person at the desk can read it out of a PasswordBox with two lines of anything.
+        ApiKeyBox.Clear();
+        ApiKeyRow.Visibility = Visibility.Collapsed;
+        // Nothing to rebuild — both API generators read the key per turn precisely so that a key
+        // entered after the generator was built still takes effect on the very next send.
+        InputBox.Focus();
     }
 
     /// <summary>
@@ -248,6 +324,7 @@ public partial class ChatPopupWindow : Window
         {
             var conversation = Messages.Where(m => !m.IsLocalOnly).Select(m => m.Message).ToList();
             var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation, _sessionId);
+            OfferKeyReentryIfRejected(draft);
             // The only place a greeting is attached. Everything else in Messages — the popup's own
             // lines, the user's turns — is left exactly as it was.
             Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft), greetFor: _emailContext));

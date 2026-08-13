@@ -26,13 +26,14 @@ public sealed class SolarDraftGenerator : IDraftGenerator
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(60) };
 
-    private readonly string? _apiKey;
+    /// <summary>The name <see cref="ApiKeys"/> files this backend's key under.</summary>
+    public const string KeyName = "UPSTAGE_API_KEY";
+
     private readonly string _endpoint;
     private readonly string _model;
 
     public SolarDraftGenerator()
     {
-        _apiKey = Environment.GetEnvironmentVariable("UPSTAGE_API_KEY");
         _endpoint = Environment.GetEnvironmentVariable("EMAILWRITE_SOLAR_ENDPOINT") ?? DefaultEndpoint;
         _model = Environment.GetEnvironmentVariable("EMAILWRITE_SOLAR_MODEL") ?? DefaultModel;
     }
@@ -43,9 +44,12 @@ public sealed class SolarDraftGenerator : IDraftGenerator
         int sessionId = 0,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_apiKey))
+        // Read per turn, not in the constructor: the popup keeps the generator it built the first
+        // time this backend was picked, so a key entered afterwards would never reach a cached one.
+        var apiKey = ApiKeys.Get(KeyName);
+        if (apiKey == null)
         {
-            return "UPSTAGE_API_KEY 환경변수가 설정되어 있지 않아요. 설정한 뒤 앱을 다시 시작해주세요.";
+            return "Solar API 키가 없어요. 팝업 아래 입력칸에 키를 붙여넣고 저장해주세요.";
         }
 
         var (systemPrompt, examples) = DraftPromptBuilder.PromptFor(emailContext);
@@ -60,7 +64,7 @@ public sealed class SolarDraftGenerator : IDraftGenerator
         {
             Content = JsonContent.Create(new { model = _model, messages, max_tokens = 1024 }),
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _apiKey);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         try
         {

@@ -12,16 +12,12 @@ namespace EmailWrite.Core.Drafting;
 public sealed class ClaudeDraftGenerator : IDraftGenerator
 {
     private const string ModelId = "claude-haiku-4-5";
-    private readonly AnthropicClient? _client;
 
-    public ClaudeDraftGenerator()
-    {
-        var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (!string.IsNullOrWhiteSpace(apiKey))
-        {
-            _client = new AnthropicClient { ApiKey = apiKey };
-        }
-    }
+    /// <summary>The name <see cref="ApiKeys"/> files this backend's key under.</summary>
+    public const string KeyName = "ANTHROPIC_API_KEY";
+
+    private AnthropicClient? _client;
+    private string? _clientKey;
 
     public async Task<string> GenerateDraftAsync(
         EmailContext? emailContext,
@@ -29,9 +25,22 @@ public sealed class ClaudeDraftGenerator : IDraftGenerator
         int sessionId = 0,
         CancellationToken cancellationToken = default)
     {
-        if (_client == null)
+        // Built on the first turn rather than in the constructor, because the popup keeps the
+        // generator it built when this backend was first picked: a key entered after that would
+        // never reach a client that was decided at construction. Rebuilt only when the key itself
+        // changed — the client holds its own HttpClient, and a new one per turn is how sockets get
+        // exhausted, but a client still carrying the key the server just rejected is a 401 loop
+        // with no way out of it from the UI.
+        var apiKey = ApiKeys.Get(KeyName);
+        if (apiKey == null)
         {
-            return "ANTHROPIC_API_KEY 환경변수가 설정되어 있지 않아요. 설정한 뒤 앱을 다시 시작해주세요.";
+            return "Claude API 키가 없어요. 팝업 아래 입력칸에 키를 붙여넣고 저장해주세요.";
+        }
+
+        if (_client == null || _clientKey != apiKey)
+        {
+            _client = new AnthropicClient { ApiKey = apiKey };
+            _clientKey = apiKey;
         }
 
         // Nothing is cached between calls here — the whole history is resent every turn — so

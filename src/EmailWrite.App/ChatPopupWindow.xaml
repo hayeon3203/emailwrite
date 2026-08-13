@@ -61,6 +61,8 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <!-- API key entry, collapsed unless the picked backend has no key -->
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
@@ -225,8 +227,35 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <!-- API key. Shown only when the backend just picked has no key anywhere, which is
+                 the one moment the user can act on it: an installed app with no key otherwise
+                 fails at the end of a turn, and the fix (a machine environment variable + a
+                 restart) is not something a colleague should have to be walked through. -->
+            <StackPanel x:Name="ApiKeyRow" Grid.Row="2" Margin="10,4,10,0" Visibility="Collapsed">
+                <TextBlock x:Name="ApiKeyLabel" FontSize="11" Foreground="#FF9A9A9A"
+                           Margin="4,0,0,4" TextWrapping="Wrap" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" CornerRadius="16" Background="#FFF0F0F3">
+                        <!-- PasswordBox, not TextBox: the key gets pasted in an office where
+                             somebody is usually looking at the screen. -->
+                        <PasswordBox x:Name="ApiKeyBox" BorderThickness="0" Background="Transparent"
+                                     Padding="12,8" FontSize="12" VerticalContentAlignment="Center"
+                                     KeyDown="ApiKeyBox_KeyDown" />
+                    </Border>
+
+                    <Button Grid.Column="1" x:Name="ApiKeySaveButton" Content="저장" Width="44" Height="34"
+                            FontSize="12" Margin="6,0,0,0" Style="{StaticResource RoundAccentButtonStyle}"
+                            Click="ApiKeySaveButton_Click" />
+                </Grid>
+            </StackPanel>
+
             <!-- Input -->
-            <Grid Grid.Row="2" Margin="10,8,10,10">
+            <Grid Grid.Row="3" Margin="10,8,10,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
