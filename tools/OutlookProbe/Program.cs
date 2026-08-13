@@ -1,3 +1,4 @@
+using EmailWrite.Core.Drafting;
 using EmailWrite.Core.OutlookIntegration;
 
 namespace OutlookProbe;
@@ -12,6 +13,15 @@ internal static class Program
             Console.WriteLine($"실패: {error}");
             return;
         }
+
+        // 인사말이 여기서 나온다. 이름은 Outlook 프로필, 부서는 Exchange 전역 주소 목록(회사 서버)
+        // 값이고 둘 다 앱이 만들어내는 게 아니라 받아오는 것이다 — 옛 소속이 찍히면 고칠 곳은
+        // 여기가 아니라 그 주소록이다. 그걸 가르려면 실제로 뭐가 넘어오는지부터 보여야 한다.
+        Console.WriteLine("=== 나 (인사말 재료) ===");
+        Console.WriteLine($"이름(Outlook 프로필): {context!.UserName ?? "(못 읽음)"}");
+        Console.WriteLine($"부서(회사 주소록): {context.UserOrg ?? "(못 읽음 — 비Exchange 계정이거나 접근 거부)"}");
+        Console.WriteLine($"만들어지는 인사말: {DraftGreeting.For(context)?.Replace("\n", " / ") ?? "(없음)"}");
+        Console.WriteLine();
 
         Console.WriteLine("=== 현재 메일 ===");
         Console.WriteLine($"제목: {context!.Current.Subject}");

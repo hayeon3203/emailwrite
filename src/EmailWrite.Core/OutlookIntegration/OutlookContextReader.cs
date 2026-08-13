@@ -72,7 +72,7 @@ public static class OutlookContextReader
         var current = ToEmailMessage(mailItem);
         var history = GetThreadHistory(mailItem);
 
-        context = new EmailContext(current, history, GetUserName(app));
+        context = new EmailContext(current, history, GetUserName(app), GetUserOrg(app));
         return true;
     }
 
@@ -158,6 +158,40 @@ public static class OutlookContextReader
         {
             return null;
         }
+    }
+
+    // Read at most once per app run, answer kept either way — including the failure. This one goes
+    // through CurrentUser.AddressEntry, which is exactly what GetUserName above refuses to touch
+    // because it raises Outlook's "a program is trying to access e-mail information" dialog. That
+    // dialog is modal and lands on the STA thread the popup is waiting on, so asking once per mail
+    // would stall every open; caching a refusal is the difference between one prompt and one per
+    // reply. Accepted deliberately — the department is not available any other way.
+    private static string? _userOrg;
+    private static bool _userOrgRead;
+
+    private static string? GetUserOrg(Outlook.Application app)
+    {
+        if (_userOrgRead)
+        {
+            return _userOrg;
+        }
+
+        _userOrgRead = true;
+        try
+        {
+            // Null on a POP/IMAP account: GetExchangeUser only answers for Exchange entries, and
+            // there is no other place a department is stored.
+            var department = app.Session.CurrentUser?.AddressEntry?.GetExchangeUser()?.Department;
+            _userOrg = string.IsNullOrWhiteSpace(department) ? null : department.Trim();
+        }
+        catch (COMException)
+        {
+            // Denied, timed out, or not an Exchange profile. The greeting then names the user
+            // without a department rather than inventing one.
+            _userOrg = null;
+        }
+
+        return _userOrg;
     }
 
     private static EmailMessage ToEmailMessage(Outlook.MailItem mail)

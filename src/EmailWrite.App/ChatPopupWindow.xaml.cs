@@ -65,6 +65,18 @@ public partial class ChatPopupWindow : Window
         var startup = Environment.GetEnvironmentVariable("EMAILWRITE_BACKEND");
         BackendCombo.SelectedItem = BackendCombo.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(item => (string?)item.Tag == startup) ?? BackendCombo.Items[0];
+
+        // The item said "로컬 (Mi:dm)" whatever .gguf EMAILWRITE_MODEL actually pointed at, so an
+        // A/B run had the screen naming a model that was not the one answering. That is §7/§8 in
+        // miniature — the reported path and the real path drifting apart — and it costs one line to
+        // close. Full filename on hover, since the label only has room for the family name.
+        var model = Environment.GetEnvironmentVariable("EMAILWRITE_MODEL");
+        if (!string.IsNullOrWhiteSpace(model)
+            && BackendCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string?)i.Tag == "local") is { } localItem)
+        {
+            localItem.Content = $"로컬 ({model.Split('-')[0]})";
+            localItem.ToolTip = model;
+        }
     }
 
     /// <summary>
@@ -236,7 +248,9 @@ public partial class ChatPopupWindow : Window
         {
             var conversation = Messages.Where(m => !m.IsLocalOnly).Select(m => m.Message).ToList();
             var draft = await _draftGenerator.GenerateDraftAsync(_emailContext, conversation, _sessionId);
-            Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft)));
+            // The only place a greeting is attached. Everything else in Messages — the popup's own
+            // lines, the user's turns — is left exactly as it was.
+            Messages.Add(new ChatMessageViewModel(ChatMessage.FromAssistant(draft), greetFor: _emailContext));
         }
         catch (Exception ex)
         {
