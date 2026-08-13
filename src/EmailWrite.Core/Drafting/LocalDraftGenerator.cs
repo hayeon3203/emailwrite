@@ -46,6 +46,18 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     private TurnMarkers? _markers;
     // Which native CPU kernel llama.cpp actually loaded. Null until the weights are in.
     private string? _kernel;
+    // The classifier runs on its own StatelessExecutor rather than the session context above:
+    // feeding it through _executor would overwrite the KV cache the draft turns are built on, and
+    // a full prefill per turn costs far more than this call saves. Stateless makes its own context
+    // per inference from _kindParams (512 tokens, not 4096 — the prompt is one sentence), so there
+    // is nothing to keep in sync and nothing to dispose between runs.
+    private StatelessExecutor? _kindExecutor;
+    private ModelParams? _kindParams;
+    // How long the classification took, for the status line. Null when it did not run.
+    private string? _lastClassify;
+    // Exactly what the classifier said, before ParseKind. Kept because "판정불가" on its own does
+    // not say whether the model refused, rambled, or answered a fourth word.
+    private string? _lastRawKind;
 
     /// <summary>
     /// What the probe found, for DraftProbe to print when a new .gguf is being vetted — a model
@@ -76,6 +88,13 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     /// slower than every probe measurement with no way to see which one it was.
     /// </summary>
     public string? LastStats { get; private set; }
+
+    /// <summary>
+    /// What the classifier called the last opening turn, or null when it was off, skipped (a
+    /// revision turn has no direction) or could not answer with one of the three words. Exposed so
+    /// a 20-run measurement can separate "the label was wrong" from "the label did not help".
+    /// </summary>
+    public string? LastKind { get; private set; }
 
     public LocalDraftGenerator()
     {
@@ -139,7 +158,15 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             {
                 StartSession();
                 _sessionId = sessionId;
-                toFeed = BuildPrompt(emailContext, conversation);
+                // Only the opening turn has a direction to establish: everything after it is a
+                // revision request ("조금 더 부드럽게"), and the continuation path above never
+                // rebuilds the prompt anyway. So this is at most one extra call per conversation —
+                // plus one per "다시", which starts the opening turn over.
+                LastKind = Environment.GetEnvironmentVariable("EMAILWRITE_KIND") == "1"
+                        && conversation.Count == 1 && conversation[0].Role == ChatRole.User
+                    ? await ClassifyAsync(conversation[0].Text, cancellationToken)
+                    : null;
+                toFeed = BuildPrompt(emailContext, conversation, LastKind);
             }
 
             var inferenceParams = new InferenceParams
@@ -173,7 +200,8 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             // draft was cut off, which costs the whole cap in decode time.
             LastStats = $"커널 {_kernel} · 프리필 {prefill.TotalSeconds:F1}s · {tokens}토큰 "
                       + $"{tokens / Math.Max(0.1, (watch.Elapsed - prefill).TotalSeconds):F1}t/s "
-                      + $"· 프롬프트 {toFeed.Length}자";
+                      + $"· 프롬프트 {toFeed.Length}자"
+                      + (_lastClassify == null ? "" : $" · 성격 {LastKind ?? "판정불가"} {_lastClassify}");
 
             // The cache now also holds the reply just generated, which the caller will hand back
             // as the next conversation entry — hence +1.
@@ -192,6 +220,97 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             // assumes a prefix which may not be there.
             _sessionId = -1;
             return $"로컬 모델 추론 중 오류가 발생했어요: {ex.Message}";
+        }
+        finally
+        {
+            _inferLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Asks the model one question about one sentence: is this a request, a promise, or neither.
+    /// The answer becomes the 성격 field of the draft prompt (<see cref="DraftPromptBuilder"/>).
+    ///
+    /// The reason this can work while the same model gets the direction wrong when drafting is that
+    /// this call sees *only* the user's sentence — no mail, no thread history, no signature block.
+    /// §9 traced the inversion to exactly that material ("상대방 문장 → 내 문장"), and none of it
+    /// is in this prompt. Doing the same judgement inside the draft call would throw that away.
+    ///
+    /// The draft path calls this only when EMAILWRITE_KIND=1, so the measured baseline stays what
+    /// runs by default and the label can be A/B'd without a rebuild — same pattern as
+    /// EMAILWRITE_WHOAMI/EX2/NO_EX_ASK. Any failure returns null, which builds today's prompt
+    /// exactly: a wrong label points the draft the wrong way, so falling back to "no label" is the
+    /// only safe direction to fail in.
+    /// </summary>
+    private async Task<string?> ClassifyAsync(string intent, CancellationToken cancellationToken)
+    {
+        _lastClassify = null;
+        try
+        {
+            _kindExecutor ??= new StatelessExecutor(_weights!, _kindParams!);
+
+            var template = new LLamaTemplate(_weights!) { AddAssistant = true };
+            template.Add("system", DraftPromptBuilder.KindSystemPrompt);
+            foreach (var (role, text) in DraftPromptBuilder.KindExampleTurns)
+            {
+                template.Add(role == ChatRole.User ? "user" : "assistant", text);
+            }
+
+            template.Add("user", DraftPromptBuilder.KindQuestion(intent));
+            var prompt = System.Text.Encoding.UTF8.GetString(template.Apply());
+
+            var answer = new System.Text.StringBuilder();
+            var watch = Stopwatch.StartNew();
+            // 8 rather than 1: the model often answers "요청입니다" or leads with a particle, and
+            // ParseKind reads the first of the three words out of whatever comes back. Stopping at
+            // one token would turn those into 판정불가.
+            //
+            // Temperature 0 unlike the draft call, which is left at llama.cpp's default. Sampling is
+            // what a draft needs and what a classification must not have: the first measurement ran
+            // the same sentence 20 times and got 요청 ten times, 약속 once and nothing readable nine
+            // times. There is one right answer here, so the model should give the same one every time
+            // — and it makes the label reproducible enough to actually measure.
+            var inferenceParams = new InferenceParams
+            {
+                MaxTokens = 8,
+                SamplingPipeline = new DefaultSamplingPipeline { Temperature = 0 },
+                AntiPrompts = _markers == null ? new List<string>() : new List<string> { _markers.TurnEnd },
+            };
+
+            await foreach (var token in _kindExecutor.InferAsync(prompt, inferenceParams, cancellationToken))
+            {
+                answer.Append(token);
+            }
+
+            _lastClassify = $"{watch.Elapsed.TotalSeconds:F1}s";
+            _lastRawKind = answer.ToString().Trim();
+            return DraftPromptBuilder.ParseKind(_lastRawKind);
+        }
+        catch (Exception)
+        {
+            // The draft is the product; a classifier that throws must not take it down with it.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The classifier on its own, with no draft behind it — one 1.4s call instead of a 15s turn.
+    /// This is what makes the classifier measurable as a thing in itself: whether the label helps
+    /// and whether the label is right are two different questions, and the first measurement could
+    /// not tell them apart. Returns the kind, and what the model actually said, so an unreadable
+    /// answer can be looked at rather than just counted as 판정불가.
+    /// </summary>
+    public async Task<(string? Kind, string Raw, double Seconds)> ClassifyOnlyAsync(
+        string intent, CancellationToken cancellationToken = default)
+    {
+        await EnsureWeightsAsync(cancellationToken);
+        Progress?.Report(string.Empty);
+        await _inferLock.WaitAsync(cancellationToken);
+        try
+        {
+            var watch = Stopwatch.StartNew();
+            var kind = await ClassifyAsync(intent, cancellationToken);
+            return (kind, _lastRawKind ?? "", watch.Elapsed.TotalSeconds);
         }
         finally
         {
@@ -317,6 +436,15 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                     : 99,
             };
             _modelParams = modelParams;
+            // Same weights, same threads, same GPU layers — only the context is small, because the
+            // classifier prompt is one sentence and a 4096-token KV allocation per call is pure waste.
+            _kindParams = new ModelParams(_modelPath)
+            {
+                ContextSize = 512,
+                Threads = modelParams.Threads,
+                BatchThreads = modelParams.BatchThreads,
+                GpuLayerCount = modelParams.GpuLayerCount,
+            };
             // Reading 1.4GB off disk is several seconds on its own, and on a first run it lands
             // right after the download — so the line has to change, or it reads as a stuck 100%.
             Progress?.Report("모델 불러오는 중…");
@@ -554,7 +682,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     /// chat template — whatever that model's is — mirroring <see cref="ClaudeDraftGenerator"/>'s
     /// "resend the whole history every turn" approach instead of keeping session state.
     /// </summary>
-    private string BuildPrompt(EmailContext? emailContext, IReadOnlyList<ChatMessage> conversation)
+    private string BuildPrompt(EmailContext? emailContext, IReadOnlyList<ChatMessage> conversation, string? kind)
     {
         // AddAssistant appends the header this model uses to open an assistant turn — the same
         // string ProbeMarkers reads back as TurnMarkers.AssistantOpen. It defaults to false, and
@@ -563,7 +691,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         // (~43s vs ~13s) for a two-sentence draft. It means nothing to other models, so it's
         // only appended for Qwen to keep a stray token out of everyone else's system prompt.
         var isQwen = _modelPath.Contains("qwen", StringComparison.OrdinalIgnoreCase);
-        var (systemPrompt, examples) = DraftPromptBuilder.PromptFor(emailContext);
+        var (systemPrompt, examples) = DraftPromptBuilder.PromptFor(emailContext, kind);
         var template = new LLamaTemplate(_weights!) { AddAssistant = true };
         template.Add("system", systemPrompt + (isQwen ? "\n/no_think" : ""));
         foreach (var (role, text) in examples)
@@ -571,7 +699,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             template.Add(role == ChatRole.User ? "user" : "assistant", text);
         }
 
-        var (openingTurn, rest) = DraftPromptBuilder.BuildTurns(emailContext, conversation);
+        var (openingTurn, rest) = DraftPromptBuilder.BuildTurns(emailContext, conversation, kind);
         template.Add("user", openingTurn);
 
         foreach (var message in rest)
