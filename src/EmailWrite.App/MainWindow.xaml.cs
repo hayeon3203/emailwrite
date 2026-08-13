@@ -79,17 +79,6 @@ public partial class MainWindow : Window
         return IntPtr.Zero;
     }
 
-    // Which backend the popup talks to. The dropdown and the encrypted key store are M9; until
-    // then this is the same shape as every other knob in the project — unset means the measured
-    // default (local, and nothing leaves the PC).
-    private static EmailWrite.Core.Drafting.IDraftGenerator CreateDraftGenerator() =>
-        Environment.GetEnvironmentVariable("EMAILWRITE_BACKEND") switch
-        {
-            "solar" => new EmailWrite.Core.Drafting.SolarDraftGenerator(),
-            "claude" => new EmailWrite.Core.Drafting.ClaudeDraftGenerator(),
-            _ => new EmailWrite.Core.Drafting.LocalDraftGenerator(),
-        };
-
     private void ToggleChatPopup()
     {
         if (_chatPopup is { IsVisible: true })
@@ -98,7 +87,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        _chatPopup ??= new ChatPopupWindow(CreateDraftGenerator()) { Owner = this };
+        // The backend is picked in the popup's own header dropdown now (EMAILWRITE_BACKEND still
+        // decides what it opens on).
+        _chatPopup ??= new ChatPopupWindow { Owner = this };
         PositionChatPopupAboveAvatar();
         _chatPopup.Show();
         _chatPopup.Activate();

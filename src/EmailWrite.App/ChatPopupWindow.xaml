@@ -83,6 +83,21 @@
                                Foreground="#FF2A2A2A" VerticalAlignment="Center" Margin="8,0,0,0" />
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal">
+                        <!-- Which model writes the draft. Kept in the header rather than in
+                             settings because it is a per-mail decision, not a preference: the
+                             local 2.3B is scoped to greetings, requests and promises, and a
+                             draft that has to carry literals (dates, figures, names) is what
+                             the API backend is for. Switching mid-conversation is the point —
+                             a bad local draft plus "다시" on the API model is the repair. -->
+                        <ComboBox x:Name="BackendCombo" Width="92" Height="20" FontSize="10"
+                                  Margin="0,0,6,0" Padding="4,0" VerticalContentAlignment="Center"
+                                  BorderThickness="0" Background="Transparent" Foreground="#FF6A6A6A"
+                                  ToolTip="초안을 쓸 모델. 로컬은 PC 밖으로 아무것도 안 나가고, API는 메일 본문이 외부로 전송됩니다."
+                                  SelectionChanged="BackendCombo_SelectionChanged">
+                            <ComboBoxItem Tag="local" Content="로컬 (Mi:dm)" />
+                            <ComboBoxItem Tag="solar" Content="Solar" />
+                            <ComboBoxItem Tag="claude" Content="Claude" />
+                        </ComboBox>
                         <Button x:Name="RestartButton" Content="&#x21BB;" Width="22" Height="22"
                                 Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"
                                 ToolTip="새로 시작 (대화 지우고 Outlook 다시 읽기)" Click="RestartButton_Click" />

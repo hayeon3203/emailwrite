@@ -21,12 +21,17 @@ namespace EmailWrite.App;
 /// </summary>
 public partial class ChatPopupWindow : Window
 {
-    private readonly IDraftGenerator _draftGenerator;
+    // Built on first pick and kept, so switching back and forth doesn't pay LocalDraftGenerator's
+    // model load again (2s, plus a 1.4GB download the very first time). The weights are mmap'd, so
+    // an idle local generator costs page cache rather than committed memory.
+    private readonly Dictionary<string, IDraftGenerator> _generators = new();
+    private IDraftGenerator _draftGenerator = new PlaceholderDraftGenerator();
     private readonly string _typingText;
     private EmailContext? _emailContext;
     private bool _sessionEnded = true;
     // Bumped on every open so the generator can tell a new conversation from a longer one.
     private int _sessionId;
+    private bool _isBusy;
 
     public ObservableCollection<ChatMessageViewModel> Messages { get; } = new();
 
@@ -35,27 +40,72 @@ public partial class ChatPopupWindow : Window
     /// the popup would otherwise auto-hide mid-generation the moment anything else takes focus —
     /// throwing the draft away and tempting the user into a second F9 that restarts the whole thing.
     /// </summary>
-    public bool IsBusy { get; private set; }
-
-    public ChatPopupWindow() : this(new PlaceholderDraftGenerator())
+    public bool IsBusy
     {
+        get => _isBusy;
+        private set
+        {
+            _isBusy = value;
+            // The generator is read when the reply comes back, not when it is asked for: swapping
+            // backends mid-generation would file the finished draft under a model that never saw
+            // the prompt, and bump the session id out from under the KV cache that is being used.
+            BackendCombo.IsEnabled = !value;
+        }
     }
 
-    public ChatPopupWindow(IDraftGenerator draftGenerator)
+    public ChatPopupWindow()
     {
-        _draftGenerator = draftGenerator;
         InitializeComponent();
         DataContext = this;
+        _typingText = TypingIndicator.Text;
+
+        // EMAILWRITE_BACKEND still decides what the popup opens on, so an existing setup keeps
+        // behaving exactly as it did; the dropdown is now the way to change it without a restart.
+        // Unset still means local — the mail leaves the PC on the other two.
+        var startup = Environment.GetEnvironmentVariable("EMAILWRITE_BACKEND");
+        BackendCombo.SelectedItem = BackendCombo.Items.OfType<ComboBoxItem>()
+            .FirstOrDefault(item => (string?)item.Tag == startup) ?? BackendCombo.Items[0];
+    }
+
+    /// <summary>
+    /// Swaps the model the next turn is written by. The conversation on screen is deliberately
+    /// kept: the reason to switch is a draft that came out wrong, and re-typing the points to get
+    /// a second opinion is the thing this is meant to remove — pick the other model, then "다시".
+    /// </summary>
+    private void BackendCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (BackendCombo.SelectedItem is not ComboBoxItem { Tag: string tag })
+            return;
+
+        if (!_generators.TryGetValue(tag, out var generator))
+        {
+            // Same mapping EMAILWRITE_BACKEND had. Constructing is cheap for all three — the local
+            // one doesn't touch the weights until the first draft is asked for.
+            generator = tag switch
+            {
+                "solar" => new SolarDraftGenerator(),
+                "claude" => new ClaudeDraftGenerator(),
+                _ => new LocalDraftGenerator(),
+            };
+            _generators[tag] = generator;
+        }
 
         // Only the local generator has a 1.4GB first run to report on, so this is a type check
         // rather than something on IDraftGenerator that two implementations would leave empty.
         // Progress<T> captures this (UI) thread, so the report arrives back on it.
-        _typingText = TypingIndicator.Text;
-        if (draftGenerator is LocalDraftGenerator local)
+        if (generator is LocalDraftGenerator local)
         {
             local.Progress = new Progress<string>(
                 status => TypingIndicator.Text = status.Length == 0 ? _typingText : status);
         }
+
+        _draftGenerator = generator;
+
+        // The local KV cache holds this conversation as *it* generated it, and a turn that came
+        // back from an API is not in there — appending to it would feed the model a continuation
+        // of a prefix that is missing turns. A new session id makes the next local turn prefill
+        // the visible conversation from scratch instead.
+        _sessionId++;
     }
 
     /// <summary>
