@@ -72,7 +72,7 @@ public static class OutlookContextReader
         var current = ToEmailMessage(mailItem);
         var history = GetThreadHistory(mailItem);
 
-        context = new EmailContext(current, history);
+        context = new EmailContext(current, history, GetUserName(app));
         return true;
     }
 
@@ -143,6 +143,23 @@ public static class OutlookContextReader
         return IntPtr.Zero;
     }
 
+    // The profile owner's display name — the one thing the prompt was missing to tell the user
+    // apart from everyone else in the thread. Only .Name is read, never .Address or .AddressEntry,
+    // which are what trip Outlook's "a program is trying to access e-mail information" prompt.
+    // Any COM failure here degrades to null and the prompt simply goes back to naming nobody.
+    private static string? GetUserName(Outlook.Application app)
+    {
+        try
+        {
+            var name = app.Session.CurrentUser?.Name;
+            return string.IsNullOrWhiteSpace(name) ? null : name;
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+    }
+
     private static EmailMessage ToEmailMessage(Outlook.MailItem mail)
     {
         return new EmailMessage(
@@ -204,7 +221,13 @@ public static class OutlookContextReader
             // Conversation tracking isn't available for this store/item — fall back to no history.
         }
 
+        // Only what came before the mail being answered. Opening an older mail in a busy thread
+        // otherwise hands the model two contradictory states at once — "review v2" as the mail to
+        // answer, and further down the history that v3 already shipped and the PDF was already
+        // asked for — and the draft came out reflecting both, in the wrong speaker's voice.
+        // Replies are written to the mail the user has open, so the history is what preceded it.
         return results
+            .Where(m => m.ReceivedTime <= mail.ReceivedTime)
             .OrderByDescending(m => m.ReceivedTime)
             .Take(MaxThreadHistory)
             .ToList();

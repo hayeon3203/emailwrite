@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using EmailWrite.Core.OutlookIntegration;
 
 namespace EmailWrite.Core.Drafting;
@@ -37,6 +38,32 @@ internal static class DraftPromptBuilder
         "\n보낸 사람:",
         "\nFrom:",
     ];
+
+    /// <summary>
+    /// Where the sender stops writing and their signature block starts. What is left after
+    /// <see cref="QuotedReplyMarkers"/> have done their work is mostly this: one real mail ran
+    /// 8,267 chars for two sentences of content, the rest being job title, company, phone, fax,
+    /// address, a SharePoint URL and "Ideas spark change!!". The model reads all of it as material
+    /// for the draft, and the prompt pays prefill time for every char of it.
+    ///
+    /// A Korean sign-off ends the content — everything below "최서윤 드림." is signature by
+    /// convention. Capped at 20 chars before the sign-off word so a sentence that merely happens to
+    /// end in 올림 doesn't take the rest of the mail with it.
+    /// </summary>
+    private static readonly Regex SignOffLine = new(
+        @"^\s*.{0,20}(드림|올림|배상)\.?\s*$|^\s*(best regards|kind regards|regards|sincerely)[,.]?\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The contact lines of a signature, for the mails that carry one without a sign-off above it.
+    /// Dropped line by line rather than cutting to the end, so a false positive costs one line
+    /// instead of the remainder of the mail. The single-letter labels (M./F./E./A./T.) are what
+    /// Korean corporate signatures use, and requiring a digit or an @ on the same line keeps them
+    /// off an enumerated list item like "A. 첫 번째 안".
+    /// </summary>
+    private static readonly Regex ContactLine = new(
+        @"^\s*(<?https?://|[MFETAHP]\.\s.*[\d@]|tel[.:]|fax|mobile|e-?mail\s*[:.])",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>
     /// Which pair of prompts a turn runs under. There is no switch and no keyword: Outlook either
@@ -86,7 +113,11 @@ internal static class DraftPromptBuilder
     /// register, signature and all (and signing as whichever name it found in the quoted headers).
     /// The second pair shows the shape: rewrite the whole draft, no preamble, no acknowledgement.
     /// </summary>
-    public static readonly IReadOnlyList<(ChatRole Role, string Text)> ExampleTurns = new[]
+    public static readonly IReadOnlyList<(ChatRole Role, string Text)> ExampleTurns = BuildMailExamples();
+
+    private static IReadOnlyList<(ChatRole Role, string Text)> BuildMailExamples()
+    {
+        var turns = new List<(ChatRole, string)>
     {
         (ChatRole.User, BuildContextTurn(
             new EmailContext(
@@ -96,7 +127,11 @@ internal static class DraftPromptBuilder
                     "첨부한 계약서 검토 부탁드립니다. 수요일까지 회신 주세요.",
                     new DateTime(2000, 1, 1),
                     new[] { "계약서.pdf" }),
-                Array.Empty<EmailMessage>()),
+                Array.Empty<EmailMessage>(),
+                // The examples carry the "(나)" mark too — a field that shows up for the first time
+                // in the real turn is a field the model has never seen used. A stand-in name, since
+                // these turns are fiction; the real one comes from the Outlook profile.
+                UserName: "김수현"),
             // The example carries an intent too, so the model sees that the draft is built from
             // what the user asked for — not invented from the mail alone.
             "내일까지 검토해서 의견 정리해서 준다고, 수요일 전에는 회신한다고")),
@@ -111,6 +146,38 @@ internal static class DraftPromptBuilder
         // a tone request is meant to move the text.
         (ChatRole.Assistant, "네, 계약서 잘 받았습니다. 내일까지 꼼꼼히 살펴보고 의견 정리해서 전달드리겠습니다. 늦어도 수요일 전에는 회신드리도록 하겠습니다."),
     };
+
+        // §9-4. Both rounds above are the same shape — a request comes in, the draft promises to
+        // do it — and the model applied that shape to intents that are the other way round: asked
+        // for "국문 버전도 만들어달라고" (please also make a Korean version) it wrote "만들어
+        // 드리겠습니다" (I will make it) in 20 runs out of 20, inventing a commitment the user
+        // could have copied out and sent. With this round added, 17 of 20 kept the request a
+        // request.
+        //
+        // It is not free: the same 20 runs on a promise-shaped intent went the other way, five of
+        // them flipping into "이번 주 바쁘시다고 하셨으니" — the model now has a shape where the
+        // other party is the one doing things, and overapplies that instead. Across both intents
+        // the dangerous class (meaning inverted, sentence clean enough to send) still drops 18/40
+        // to 8/40, which is why this is on. EMAILWRITE_NO_EX_ASK=1 goes back to the two-round
+        // prompt, 304 chars shorter (~21% of the prompt, and prefill is ~93% of a turn).
+        if (!Flag("EMAILWRITE_NO_EX_ASK"))
+        {
+            turns.Add((ChatRole.User, BuildContextTurn(
+                new EmailContext(
+                    new EmailMessage(
+                        "회의록 초안 공유",
+                        "이수진",
+                        "어제 회의록 초안 공유드립니다. 확인 부탁드립니다.",
+                        new DateTime(2000, 1, 1),
+                        Array.Empty<string>()),
+                    Array.Empty<EmailMessage>(),
+                    UserName: "김수현"),
+                "확인했다고, 발표 자료도 같이 공유해달라고")));
+            turns.Add((ChatRole.Assistant, "회의록 확인했습니다. 혹시 발표 자료도 같이 공유해주실 수 있을까요?"));
+        }
+
+        return turns.Select(t => (t.Item1, t.Item2)).ToList();
+    }
 
     /// <summary>
     /// <see cref="ExampleTurns"/> for the no-mail case, kept to the same two rounds and the same
@@ -193,16 +260,30 @@ internal static class DraftPromptBuilder
     /// </summary>
     public static string BuildContextTurn(EmailContext context, string? intent = null)
     {
+        // §9-1, off by default. Marking the user made nothing better on a mail with no thread
+        // history — 20 runs each way, clean 17->13 on a request-shaped intent and 13->14 on a
+        // promise-shaped one — and the half of this that targets the failure it was written for
+        // (a draft copying a sentence out of the history and swapping the speaker) cannot be
+        // measured until a mail that actually has history is the one open in Outlook.
+        // Null switches every "(나)" mark below off at once, which is also what happens when
+        // Outlook will not give up the profile name.
+        var me = Flag("EMAILWRITE_WHOAMI") ? context.UserName : null;
+
         var sb = new StringBuilder();
         sb.AppendLine("## 답장할 메일");
-        AppendEmail(sb, context.Current, MaxCurrentBodyChars);
+        AppendEmail(sb, context.Current, MaxCurrentBodyChars, me, isCurrent: true);
 
-        if (context.ThreadHistory.Count > 0)
+        // An out-of-office reply is in the conversation but has nothing to do with the reply being
+        // written: one thread carried 박선영's vacation auto-reply, and the draft that came out of
+        // it read as if the user were the one away. Dropped before the header is written, or a
+        // thread whose only other item is an auto-reply prints an empty history section.
+        var history = context.ThreadHistory.Where(m => !IsAutoReply(m)).ToList();
+        if (history.Count > 0)
         {
             sb.AppendLine("## 스레드 히스토리 (최근 순, 참고용)");
-            foreach (var message in context.ThreadHistory)
+            foreach (var message in history)
             {
-                AppendEmail(sb, message, MaxHistoryBodyChars);
+                AppendEmail(sb, message, MaxHistoryBodyChars, me);
             }
         }
 
@@ -220,10 +301,20 @@ internal static class DraftPromptBuilder
         return sb.ToString();
     }
 
-    private static void AppendEmail(StringBuilder sb, EmailMessage message, int maxBodyChars)
+    private static void AppendEmail(
+        StringBuilder sb, EmailMessage message, int maxBodyChars, string? me = null, bool isCurrent = false)
     {
         sb.AppendLine($"- 제목: {message.Subject}");
-        sb.AppendLine($"- 발신자: {message.SenderName}");
+        sb.AppendLine($"- 발신자: {message.SenderName}{(IsMe(message.SenderName, me) ? " (나)" : "")}");
+        // Data, not another instruction. Every line the mail path gained by *telling* the model
+        // something has failed (§3: three of them killed the output outright), while every fix that
+        // stuck changed what the model is shown — so who the user is arrives as one more field of
+        // the mail, in the shape the model is already reading.
+        if (isCurrent && me != null)
+        {
+            sb.AppendLine($"- 받는 사람: {me} (나)");
+        }
+
         sb.AppendLine($"- 수신 시각: {message.ReceivedTime:yyyy-MM-dd HH:mm}");
         if (message.AttachmentNames.Count > 0)
         {
@@ -231,9 +322,32 @@ internal static class DraftPromptBuilder
         }
 
         sb.AppendLine("- 본문:");
-        sb.AppendLine(Truncate(StripQuotedReply(message.Body), maxBodyChars));
+        sb.AppendLine(Truncate(CleanBody(message.Body), maxBodyChars));
         sb.AppendLine();
     }
+
+    /// <summary>
+    /// The mail body with everything that is not the sender's message taken out — the quoted
+    /// original first, then the signature. Truncation is what used to stand in for this, and it is
+    /// a poor substitute: the cap keeps the first 1,200 chars whether they are content or a fax
+    /// number, and history entries were being cut mid-signature at 300.
+    /// </summary>
+    internal static string CleanBody(string body) =>
+        Environment.GetEnvironmentVariable("EMAILWRITE_KEEPSIG") == "1"
+            ? StripQuotedReply(body)
+            : StripSignature(StripQuotedReply(body));
+
+    /// <summary>
+    /// Whether this sender is the user. Outlook writes the same display name into both places, so
+    /// an exact match is enough — and a miss only costs the "(나)" mark, never a wrong one.
+    /// </summary>
+    private static bool IsMe(string senderName, string? me) =>
+        me != null && string.Equals(senderName.Trim(), me.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Out-of-office replies, which Outlook prefixes on the subject.</summary>
+    private static bool IsAutoReply(EmailMessage message) =>
+        message.Subject.StartsWith("자동 회신:", StringComparison.Ordinal) ||
+        message.Subject.StartsWith("Automatic reply:", StringComparison.OrdinalIgnoreCase);
 
     private static string Truncate(string body, int maxChars) =>
         body.Length <= maxChars ? body : body[..maxChars] + "\n...(이하 생략)";
@@ -251,5 +365,24 @@ internal static class DraftPromptBuilder
         }
 
         return body[..cut].TrimEnd();
+    }
+
+    internal static string StripSignature(string body)
+    {
+        var kept = new List<string>();
+        foreach (var line in body.Split('\n'))
+        {
+            if (SignOffLine.IsMatch(line))
+            {
+                break;
+            }
+
+            if (!ContactLine.IsMatch(line))
+            {
+                kept.Add(line);
+            }
+        }
+
+        return string.Join('\n', kept).TrimEnd();
     }
 }
