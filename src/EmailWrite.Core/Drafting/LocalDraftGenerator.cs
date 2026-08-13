@@ -306,6 +306,15 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 ContextSize = 4096,
                 Threads = threads,
                 BatchThreads = threads,
+                // Everything the GPU will take. On this box that is 프리필 29.9s -> 9.0s and
+                // 디코드 10.2 -> 27.1 t/s (Experiments.md §D); with no Vulkan device answering,
+                // llama.cpp leaves every layer on the CPU and this costs nothing. 99 rather than
+                // the real layer count because it only has to be "at least all of them".
+                // EMAILWRITE_GPU_LAYERS=0 forces the old CPU-only path back, which is the knob to
+                // reach for if a machine turns out to have a Vulkan device slower than its CPU.
+                GpuLayerCount = int.TryParse(Environment.GetEnvironmentVariable("EMAILWRITE_GPU_LAYERS"), out var gpu)
+                    ? gpu
+                    : 99,
             };
             _modelParams = modelParams;
             // Reading 1.4GB off disk is several seconds on its own, and on a first run it lands
@@ -332,16 +341,26 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     /// </summary>
     private static string DescribeKernel()
     {
+        string? cpu = null;
+        var gpu = false;
         foreach (ProcessModule module in Process.GetCurrentProcess().Modules)
         {
-            if (!string.Equals(module.ModuleName, "ggml-cpu.dll", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var folder = Path.GetFileName(Path.GetDirectoryName(module.FileName)) ?? "?";
-            return $"{folder} {new FileInfo(module.FileName).Length / 1024}K";
+            if (string.Equals(module.ModuleName, "ggml-cpu.dll", StringComparison.OrdinalIgnoreCase))
+            {
+                var folder = Path.GetFileName(Path.GetDirectoryName(module.FileName)) ?? "?";
+                cpu = $"{folder} {new FileInfo(module.FileName).Length / 1024}K";
+            }
+            // The same question one layer up: the CPU kernel is loaded either way, so on its own
+            // that name says nothing about whether the GPU took the layers. Without this the
+            // status line reads identically at 8.9s and 13.8s of prefill (§D), which is exactly
+            // the shape §8 took — a backend silently not being the one that was measured.
+            else if (string.Equals(module.ModuleName, "ggml-vulkan.dll", StringComparison.OrdinalIgnoreCase))
+            {
+                gpu = true;
+            }
         }
 
-        return "확인 불가";
+        return (cpu ?? "확인 불가") + (gpu ? " +vulkan" : "");
     }
 
     /// <summary>

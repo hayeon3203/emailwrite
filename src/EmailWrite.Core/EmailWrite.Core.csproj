@@ -15,7 +15,14 @@
     <PackageReference Include="Microsoft.Office.Interop.Outlook" Version="15.0.4797.1004" />
     <PackageReference Include="Anthropic" Version="12.39.0" />
     <PackageReference Include="LLamaSharp" Version="0.24.0" />
+    <!--
+      Both backends on purpose. Vulkan is what makes a turn usable (프리필 29.9s -> 9.0s on this
+      box, Experiments.md §D), but its package ships no ggml-cpu.dll at all, so a PC with no
+      Vulkan device would have nothing left to run on. Cpu stays alongside it as the floor.
+      llama.cpp picks Vulkan when a device answers and falls back on its own when none does.
+    -->
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.24.0" />
+    <PackageReference Include="LLamaSharp.Backend.Vulkan" Version="0.24.0" />
   </ItemGroup>
 
 </Project>

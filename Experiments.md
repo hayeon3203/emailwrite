@@ -11,6 +11,8 @@
 **§9(초안이 화자를 뒤집음)는 절반** — 노이즈 제거(9-2)와 스레드 순서(9-3)는 했고, 뒤집힘 자체를
 겨냥하는 9-1·9-4가 남았다.
 
+**속도는 §D에서 닫혔다** — Vulkan 백엔드로 1턴 34.6s → 13.4s. 하드웨어 요구사항은 `Requirements.md`.
+
 ---
 
 ## 1. 모델 선택
@@ -486,9 +488,12 @@ dotnet run --project tools/DraftProbe -- --outlook --dump-body    # 지금 열�
 `EMAILWRITE_BACKEND=solar`일 때만 이 백엔드를 쓰고, 미설정이면 지금까지처럼 로컬이다 —
 **메일이 PC를 떠나는 경로라 기본값이 되지 않게 해뒀다.** 드롭다운과 암호화 키 저장은 M9.
 
-프롬프트 쪽에 남은 싼 수는 9-5(담을 내용을 여는 턴 맨 앞으로) 하나다.
+프롬프트 쪽에 남은 싼 수는 9-5(담을 내용을 여는 턴 맨 앞으로) 하나인데, **§D-1을 하려면 그건
+하면 안 된다** — 담을 내용이 맨 앞으로 가면 미리 프리필해둘 접두사가 사라진다.
 
-아래 A~E는 그 전에 세운 목록이고, A만 측정이 끝났다 (프로브=avx2라 값은 그대로 유효하다).
+아래 A~E는 그 전에 세운 목록이고, **A·D의 측정이 끝났고 D는 반영까지 했다.** "로컬 1턴 30초 밑"의
+답은 §D였다 — Vulkan 백엔드가 들어가서 **34.6s → 13.4s**다. 남은 것은 B(멀티턴 20회 반복
+플래그), C(모델 후보), 그리고 §D-1(미리 프리필).
 **B-1(멀티턴 20회 반복 플래그)은 여전히 없다** — §7 이후 톤 수정 품질은 아직 표본 1뿐이다.
 
 ## A. 체감 지연의 정체 — 측정 끝 (2026-08-13). 진짜 원인은 §8
@@ -576,6 +581,8 @@ COM 호출이고, A1~A4 어디에도 안 들어있던 후보다. **띄워둔 앱
 3. 판정은 §4와 같은 축 — 깨끗 / 문제 / 그중 위험 / 미생성
 4. 2턴 요청은 톤 수정(`조금 더 부드럽게`)과 축약(`한 문장으로`) 둘 다. 이 대화에서 톤 수정만 초안을 그대로 되돌려준 적이 있다
 
+8/40"은 조건이 특정되기 전까지 믿을 수 없는 수치로 둔다.**
+
 ## C. 모델 후보 측정
 
 자동 다운로드는 기본 모델 URL만 안다(`LocalDraftGenerator.cs:233`). 후보 .gguf는 `C:\ProgramData\EmailWrite\Models\`에 **직접** 받아둬야 `EMAILWRITE_MODEL`이 먹는다.
@@ -590,16 +597,69 @@ COM 호출이고, A1~A4 어디에도 안 들어있던 후보다. **띄워둔 앱
 | Qwen3-4B-Instruct-2507 | 2.33GB | Apache-2.0, ChatML, 비추론 변종. **D 선행 없이는 속도 판정 무의미** (CPU 1턴 ~24s 추정) |
 | HyperCLOVA X SEED 1.5B | 1.06GB | HF 게이트(401) 승인 선행. 현재보다 작아서 CPU로도 바로 잼 |
 
-## D. GPU — Arc 140V가 통째로 놀고 있음
+## D. GPU — 측정 끝 (2026-08-13). 30초 밑으로 내리는 유일한 확인된 수
 
-**§8 선행.** 지금 GPU를 붙이면 noavx CPU(422s)와 비교하게 되고, 그건 "GPU가 8배 빠르다"는 가짜
-결론을 준다. 비교 대상은 avx2의 프리필 ~50s다.
+§8을 고친 avx2를 상대로 쟀다. 같은 커밋, 같은 프롬프트(2,974자 — `--intent`를 946자로 늘려 실제
+메일 3,366자에 근접시킨 것), 같은 커널(`avx2 544K`), 연속 실행:
 
-- `LLamaSharp.Backend.Cpu` → `LLamaSharp.Backend.Vulkan` (Intel이라 CUDA는 불가), `ModelParams.GpuLayerCount` 추가
-- `Directory.Build.props`의 퍼블리시 타겟이 패키지 id `LLamaSharp.Backend.Cpu`로 하드코딩돼 있어 **같이** 고쳐야 함. §8 조치로 그 타겟을 손댈 때 한 번에 볼 것
-- Vulkan 백엔드도 `runtimes\<rid>\native\` 구조를 쓰므로 **§8의 평탄화 함정이 그대로 반복된다.** 붙인 뒤 로드된 DLL을 해시로 확인할 것
-- 측정: 동일 프롬프트 1턴 시간을 §8 수정 후 CPU 값과 비교
-- C의 4B 후보가 실용적이 되는지가 여기서 갈린다
+| 빌드 | 프리필 | 디코드 | 1턴 총 | 2턴 | 3턴 |
+|---|---|---|---|---|---|
+| `Backend.Cpu` (**현재 출하 구성**) | 29.9s | 10.2 t/s | **34.6s** | 3.1s | 1.7s |
+| `Backend.Vulkan`, `ngl=0` | 13.3s | 8.7 t/s | 17.6s | 3.2s | 3.1s |
+| `Backend.Vulkan`, `ngl=99` | 9.0s | 27.1 t/s | **12.2s** | 1.9s | 1.7s |
+
+읽히는 것:
+
+- **`ngl=0` 줄이 중요하다.** 레이어를 하나도 안 올렸는데 프리필이 절반 이하다. 커널 이름·크기가
+  같으므로 CPU 연산이 빨라진 게 아니라, Vulkan 백엔드가 등록만 돼 있으면 큰 배치 matmul(=프리필)이
+  GPU로 스케줄된다는 뜻이다. 디코드는 그대로 CPU 속도(8.7 t/s)인 것이 그 증거다
+- `ngl=99`는 거기에 디코드 3배(10.2 → 27.1 t/s)를 더 얹는다
+- 실제 최악(3,366자)에 비례 적용하면 프리필 ~10s, **1턴 15s 안쪽** — 30초 밑이다
+- 4B 후보(§C)가 CPU로는 무리라던 판정도 다시 물어야 한다
+
+**붙였다 (2026-08-13).** 위에서 확인이 필요하다고 적어둔 두 가지가 어떻게 됐는지:
+
+1. **두 백엔드를 같이 참조한다.** `Backend.Vulkan` 패키지엔 `ggml-cpu.dll`이 없어서(그 폴더엔
+   ggml-base / ggml-vulkan / ggml / llama / llava_shared뿐) 단독으로 쓰면 Vulkan 장치가 없는 PC에
+   남는 게 없다. `Backend.Cpu`를 바닥으로 깔아두면 llama.cpp가 장치가 응답할 때만 Vulkan을 쓴다.
+   RID 빌드 출력에서 확인한 실제 배치 — 루트엔 네이티브 DLL이 하나도 없다:
+
+   ```
+   runtimes\win-x64\native\  avx 5 / avx2 5 / avx512 5 / noavx 5 / vulkan 1
+   ```
+
+   `vulkan`에 하나뿐인 것은 나머지 네 이름(ggml-base·ggml·llama·llava_shared)이 Cpu 패키지 것과
+   같아서 NuGet이 하나만 남기기 때문이고, **동작에는 문제가 없다** — 남는 `ggml-vulkan.dll`이
+   ggml이 동적으로 찾아 붙이는 백엔드다. 실행 로그가 `ggml_vulkan: Found 1 Vulkan devices` →
+   `load_tensors: layer 0 assigned to device Vulkan0`으로 확인해준다
+2. `Directory.Build.props`의 두 타겟은 패키지 id를 **`LLamaSharp.Backend.` 접두사로** 매칭하게
+   고쳤다. 네이티브 파일은 RID별 하위 패키지(`…Backend.Vulkan.Windows`)에서 오므로 id를 하나씩
+   나열하는 방식이 백엔드가 늘어나는 순간 조용히 커버리지를 잃는다
+
+`GpuLayerCount` 기본값은 **99**(전부 올림)로 뒀다. 장치가 없으면 llama.cpp가 전부 CPU에 두므로
+공짜고, `EMAILWRITE_GPU_LAYERS=0`이 예전 CPU 전용 경로다. 출하 구성 실측:
+
+```
+[13.4s] 커널 avx2 544K +vulkan · 프리필 8.9s · 24토큰 24.4t/s · 프롬프트 2974자
+[18.8s] 커널 avx2 544K        · 프리필 13.8s · 29토큰 8.3t/s  · 프롬프트 2974자   (GPU_LAYERS=0)
+```
+
+상태줄에 `+vulkan`을 붙인 것도 이번에 같이 했다 (`DescribeKernel`). CPU 커널은 GPU를 쓰든 말든
+로드되므로 커널 이름만으로는 8.9s와 13.8s가 구분되지 않는다 — §8이 정확히 그 모양이었다.
+
+**품질은 안 움직인다.** 같은 의도로 20회씩을 GPU와 CPU 강제로 각각 돌렸고 실패 분포가 같았다.
+같은 가중치·같은 연산이고 부동소수점 반올림만 다르다는 §8의 판단대로다.
+
+### D-1. GPU 없이 하는 수 — 미리 프리필 (미구현)
+
+프롬프트의 95%(시스템 + 예시 + 메일)는 **팝업이 열리는 순간 이미 확정**돼 있다. 사용자가 담을
+내용을 타이핑하는 동안 그 접두사를 미리 프리필해두면 전송 시점에 남는 것은 의도 몇십 자뿐이다.
+비용의 93%가 프리필이므로(§A5) 체감이 2턴(≈3s)에 가까워진다.
+
+`LLamaSharp 0.24.0`에 `StatefulExecutorBase.PrefillPromptAsync(string)`가 이미 있다 — 토큰을
+생성하지 않고 KV만 채운다. 필요한 것은 `BuildContextTurn`을 "메일까지"와 "담을 내용부터" 둘로
+가르는 것, 그리고 `_fedMessageCount`/`_kvEndsAtTurnEnd` 옆에 접두사가 들어갔다는 사실을 하나 더
+두는 것. **§A5의 "고정 접두사 KV 유지"(1,000자, 30%)보다 이쪽이 크다** — 메일까지 포함해 95%다.
 
 ## E. 자잘한 것
 
@@ -615,6 +675,7 @@ COM 호출이고, A1~A4 어디에도 안 들어있던 후보다. **띄워둔 앱
 | `EMAILWRITE_TEMP` | 샘플링 온도 |
 | `EMAILWRITE_EX2=1` | 자유 모드 예시 2개째 추가 (실험용) |
 | `EMAILWRITE_RCPT=1` | 여는 턴에 "상사에게" 추가 (실험용, 기각됨) |
+| `EMAILWRITE_GPU_LAYERS` | GPU에 올릴 레이어 수 (§D). 기본 99(전부), `0`이면 CPU 전용 |
 | `EMAILWRITE_BACKEND=solar` | Solar API로 초안 생성 (`UPSTAGE_API_KEY` 필요) |
 | `EMAILWRITE_BACKEND=claude` | Claude API로 초안 생성 (`ANTHROPIC_API_KEY` 필요) |
 | `EMAILWRITE_KEEPSIG=1` | 서명 블록 제거를 끈다 (§9-2 A/B용) |

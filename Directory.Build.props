@@ -20,10 +20,14 @@
 
   <!--
     Self-contained publish otherwise fails with NETSDK1152: LLamaSharp.Backend.Cpu ships four
-    builds of the same four DLLs (noavx/avx/avx2/avx512), and a RID-specific publish flattens
-    runtimes\<rid>\native\* into the output root, where all four collide on one name. Keeping the
-    subfolders is also what makes them work — LLamaSharp probes that exact layout at startup to
-    pick a backend, which is how the ordinary build has always run.
+    builds of the same four DLLs (noavx/avx/avx2/avx512) and Backend.Vulkan a fifth set beside
+    them, and a RID-specific publish flattens runtimes\<rid>\native\* into the output root, where
+    they all collide on one name. Keeping the subfolders is also what makes them work — LLamaSharp
+    probes that exact layout at startup to pick a backend, which is how the ordinary build has
+    always run. Matched on the "LLamaSharp.Backend." prefix rather than one package id: the native
+    files come from the RID-specific sub-packages (…Backend.Vulkan.Windows), and naming them one
+    by one is how this target quietly stopped covering the whole set the moment a second backend
+    was added.
     Not solved with ErrorOnDuplicatePublishOutputFiles=false: that keeps whichever file wins and
     silently ships one arbitrary backend. Here rather than in the app project for the same reason
     as the office reference above — it has to apply to every exe that publishes, DraftProbe
@@ -32,7 +36,7 @@
   <Target Name="KeepLlamaBackendSubfolders" AfterTargets="ComputeResolvedFilesToPublishList">
     <ItemGroup>
       <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
-                             Condition="'%(ResolvedFileToPublish.NuGetPackageId)' == 'LLamaSharp.Backend.Cpu'"
+                             Condition="$([MSBuild]::ValueOrDefault('%(ResolvedFileToPublish.NuGetPackageId)', '').StartsWith('LLamaSharp.Backend.'))"
                              RelativePath="runtimes\$(RuntimeIdentifier)\native\$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('%(ResolvedFileToPublish.FullPath)'))))\%(Filename)%(Extension)" />
     </ItemGroup>
   </Target>
@@ -51,7 +55,7 @@
           Condition="'$(RuntimeIdentifier)' != ''">
     <ItemGroup>
       <ReferenceCopyLocalPaths Update="@(ReferenceCopyLocalPaths)"
-                               Condition="'%(ReferenceCopyLocalPaths.NuGetPackageId)' == 'LLamaSharp.Backend.Cpu'"
+                               Condition="$([MSBuild]::ValueOrDefault('%(ReferenceCopyLocalPaths.NuGetPackageId)', '').StartsWith('LLamaSharp.Backend.'))"
                                DestinationSubDirectory="runtimes\$(RuntimeIdentifier)\native\$([System.IO.Path]::GetFileName($([System.IO.Path]::GetDirectoryName('%(ReferenceCopyLocalPaths.FullPath)'))))\" />
     </ItemGroup>
   </Target>
