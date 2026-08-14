@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         StartIdleAnimation();
         SetupTrayIcon();
         RegisterGlobalHotkey();
+        Autostart.RepairPath();
     }
 
     private void RegisterGlobalHotkey()
@@ -177,6 +178,19 @@ public partial class MainWindow : Window
         }
 
         var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+
+        // Read on every open rather than once here: this value is also reachable from regedit,
+        // from the installer, and from a second copy of this menu, so a cached checkmark would
+        // eventually disagree with what Windows will actually do.
+        var autostartItem = new System.Windows.Forms.ToolStripMenuItem("Windows 시작 시 실행")
+        {
+            CheckOnClick = true
+        };
+        autostartItem.Click += (_, _) => Autostart.Enabled = autostartItem.Checked;
+        contextMenu.Opening += (_, _) => autostartItem.Checked = Autostart.Enabled;
+        contextMenu.Items.Add(autostartItem);
+
+        contextMenu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
         contextMenu.Items.Add("종료", null, (_, _) => Application.Current.Shutdown());
 
         _trayIcon = new System.Windows.Forms.NotifyIcon
@@ -219,6 +233,11 @@ public partial class MainWindow : Window
         if (!_isDragging)
             AvatarClicked?.Invoke(this, EventArgs.Empty);
     }
+
+    // Right-click on the avatar quits, same as the tray menu's 종료. The tray icon is the only
+    // other way out and it is easy to lose track of; the avatar is the thing on screen.
+    private void AvatarImage_MouseRightButtonUp(object sender, MouseButtonEventArgs e) =>
+        Application.Current.Shutdown();
 
     private void OnClosed(object? sender, EventArgs e)
     {

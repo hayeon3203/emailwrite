@@ -16,6 +16,7 @@
                Stretch="Uniform"
                MouseLeftButtonDown="AvatarImage_MouseLeftButtonDown"
                MouseMove="AvatarImage_MouseMove"
-               MouseLeftButtonUp="AvatarImage_MouseLeftButtonUp" />
+               MouseLeftButtonUp="AvatarImage_MouseLeftButtonUp"
+               MouseRightButtonUp="AvatarImage_MouseRightButtonUp" />
     </Grid>
 </Window>
