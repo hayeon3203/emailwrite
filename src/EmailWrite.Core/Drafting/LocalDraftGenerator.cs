@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Intrinsics.X86;
+using System.Security.Cryptography;
 using LLama;
 using LLama.Common;
 using LLama.Sampling;
@@ -9,15 +10,27 @@ using EmailWrite.Core.OutlookIntegration;
 namespace EmailWrite.Core.Drafting;
 
 /// <summary>
-/// Runs draft generation locally via LLamaSharp against a Mi:dm-2.0-Mini GGUF, downloaded
+/// Runs draft generation locally via LLamaSharp against a HyperCLOVA X SEED 1.5B GGUF, downloaded
 /// on demand into a machine-wide model cache. Mode-switch UI and custom model URLs are
 /// still M9; the minimum spec (AVX2) is checked here.
 /// </summary>
 public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 {
-    private const string ModelFileName = "midm-2.0-mini-instruct-q4_k_m.gguf";
+    // HyperCLOVA X SEED 1.5B, not Mi:dm 2.3B. Mi:dm turned a request into a promise — "국문 버전도
+    // 만들어달라고" came back as "만들어드리겠습니다" — 14 times in 20, and five separate fixes
+    // failed to move it. The sentence reads fine, so it gets copied and sent meaning the opposite.
+    // CLOVA is 8/20 on the same prompt and 0/20 with the by-direction examples that are on today.
+    // Smaller (1.06GB vs 1.33GB) and faster (6.6s vs 10.3s on turn 1) as well.
+    // The name and the URL have to move together: leave the URL on Mi:dm and a new PC downloads
+    // Mi:dm's weights, saves them under CLOVA's name, and loads the wrong model with no error.
+    private const string ModelFileName = "hyperclovax-seed-text-instruct-1.5b-q4_k_m.gguf";
     private const string ModelDownloadUrl =
-        "https://huggingface.co/mykor/Midm-2.0-Mini-Instruct-gguf/resolve/main/Midm-2.0-Mini-Instruct-Q4_K_M.gguf";
+        "https://huggingface.co/kexplo/HyperCLOVAX-SEED-Text-Instruct-1.5B-Q4_K_M-GGUF/resolve/main/hyperclovax-seed-text-instruct-1.5b-q4_k_m.gguf";
+    // Matches Hugging Face's own LFS oid for that blob, which is what makes this worth having:
+    // the file is one person's conversion in a repo they can force-push at any time, and nothing
+    // upstream would tell us. Confirmed against a fresh 1,133,974,368-byte download (2026-08-14).
+    // Bump this and ModelFileName together whenever the model moves.
+    private const string ModelSha256 = "95659a99a087fe5803150f47569dd55716a6806b6c3bf18e901ca0d341a701e4";
 
     private readonly string _modelPath;
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -75,7 +88,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 
     /// <summary>
     /// Where the "내려받는 중 42%" line goes while the model is being fetched. The first run on a
-    /// fresh PC downloads 1.4GB before it can answer anything, and with nothing reporting it the
+    /// fresh PC downloads 1.06GB before it can answer anything, and with nothing reporting it the
     /// popup sits on its typing indicator for minutes — indistinguishable from a hang. An empty
     /// report means "done, put the default text back".
     /// </summary>
@@ -102,7 +115,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         // with plain ANSI fopen, so a non-ASCII user profile name (e.g. C:\Users\조하연\...)
         // arrives mangled and the load fails. CommonApplicationData is C:\ProgramData —
         // always ASCII, writable by Users, and shared so a second user on the same PC
-        // doesn't re-download 1.1GB.
+        // doesn't re-download 1.06GB.
         var modelDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "EmailWrite", "Models");
@@ -124,11 +137,15 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
         // The bundled llama.cpp backends include a noavx build, but every measurement behind the
         // model choice was taken on AVX2 and the fallback is slow enough to be unusable for a
         // draft you wait on. Checked before anything else so a colleague on an old PC gets told
-        // what is wrong, rather than a 1.4GB download followed by a native load failure.
+        // what is wrong, rather than a 1.06GB download followed by a native load failure.
         if (!Avx2.IsSupported)
         {
+            // Was "ANTHROPIC_API_KEY 환경변수를 설정하면", which stopped being true once the key
+            // moved into the popup: it sent a colleague off to set a machine environment variable
+            // for a backend that is no longer the only API option, to fix something two clicks
+            // away on the screen they are already looking at.
             return "이 PC의 CPU는 AVX2를 지원하지 않아 로컬 모델을 쓸 수 없어요. "
-                 + "ANTHROPIC_API_KEY 환경변수를 설정하면 API 모드로 쓸 수 있어요.";
+                 + "위 목록에서 Solar나 Claude를 고르면 API 모드로 쓸 수 있어요 (키가 없으면 입력칸이 같이 떠요).";
         }
 
         try
@@ -445,7 +462,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 BatchThreads = modelParams.BatchThreads,
                 GpuLayerCount = modelParams.GpuLayerCount,
             };
-            // Reading 1.4GB off disk is several seconds on its own, and on a first run it lands
+            // Reading 1.06GB off disk is several seconds on its own, and on a first run it lands
             // right after the download — so the line has to change, or it reads as a stuck 100%.
             Progress?.Report("모델 불러오는 중…");
             _weights = await LLamaWeights.LoadFromFileAsync(modelParams, cancellationToken);
@@ -627,7 +644,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
     {
         var tempPath = _modelPath + ".download";
         using var http = new HttpClient();
-        // No timeout: HttpClient's default 100s applies to the whole response, and 1.4GB over an
+        // No timeout: HttpClient's default 100s applies to the whole response, and 1.06GB over an
         // office link does not fit in it. ResponseHeadersRead already means the body streams.
         http.Timeout = Timeout.InfiniteTimeSpan;
         using var response = await http.GetAsync(
@@ -656,6 +673,26 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                     Progress?.Report(FormatDownloadProgress(read, total));
                 }
             }
+        }
+
+        // Verified before the file gets its real name, so a bad download is never loadable and
+        // never has to be diagnosed: the weights come from a third party's conversion of NAVER's
+        // model, over a link that can also just truncate. Both failures look identical from here
+        // and this catches both. Checked on the temp file rather than on every startup — hashing
+        // 1.06GB costs several seconds and the cache does not rot on its own.
+        string actual;
+        await using (var downloaded = File.OpenRead(tempPath))
+        {
+            actual = Convert.ToHexString(
+                await SHA256.HashDataAsync(downloaded, cancellationToken)).ToLowerInvariant();
+        }
+
+        if (actual != ModelSha256)
+        {
+            File.Delete(tempPath);
+            throw new InvalidDataException(
+                $"내려받은 모델 파일이 손상됐거나 바뀌었어요. 다시 시도해 주세요. "
+                + $"(기대 {ModelSha256[..12]}…, 실제 {actual[..12]}…)");
         }
 
         File.Move(tempPath, _modelPath);

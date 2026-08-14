@@ -22,7 +22,7 @@ namespace EmailWrite.App;
 public partial class ChatPopupWindow : Window
 {
     // Built on first pick and kept, so switching back and forth doesn't pay LocalDraftGenerator's
-    // model load again (2s, plus a 1.4GB download the very first time). The weights are mmap'd, so
+    // model load again (2s, plus a 1.06GB download the very first time). The weights are mmap'd, so
     // an idle local generator costs page cache rather than committed memory.
     private readonly Dictionary<string, IDraftGenerator> _generators = new();
     private IDraftGenerator _draftGenerator = new PlaceholderDraftGenerator();
@@ -66,7 +66,7 @@ public partial class ChatPopupWindow : Window
         BackendCombo.SelectedItem = BackendCombo.Items.OfType<ComboBoxItem>()
             .FirstOrDefault(item => (string?)item.Tag == startup) ?? BackendCombo.Items[0];
 
-        // The item said "로컬 (Mi:dm)" whatever .gguf EMAILWRITE_MODEL actually pointed at, so an
+        // The item said "로컬 (CLOVA)" whatever .gguf EMAILWRITE_MODEL actually pointed at, so an
         // A/B run had the screen naming a model that was not the one answering. That is §7/§8 in
         // miniature — the reported path and the real path drifting apart — and it costs one line to
         // close. Full filename on hover, since the label only has room for the family name.
@@ -102,7 +102,7 @@ public partial class ChatPopupWindow : Window
             _generators[tag] = generator;
         }
 
-        // Only the local generator has a 1.4GB first run to report on, so this is a type check
+        // Only the local generator has a 1.06GB first run to report on, so this is a type check
         // rather than something on IDraftGenerator that two implementations would leave empty.
         // Progress<T> captures this (UI) thread, so the report arrives back on it.
         if (generator is LocalDraftGenerator local)

@@ -7,6 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
+    <!-- The installer and the planned update check both read this, so it lives here rather than
+         being typed into the .iss where the two would drift apart. -->
+    <Version>1.0.0.0</Version>
+    <!-- Built from avatar\daol-avatar-face.png (the close-up, not a body frame: the antennae on
+         the walking frames disappear at 16px). Regenerate with tools\png2ico.ps1. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +23,18 @@
     <Resource Include="..\..\avatar\daol-avatar-face.png">
       <Link>Assets\Avatar\daol-avatar-face.png</Link>
     </Resource>
+  </ItemGroup>
+
+  <!--
+    Section 3.1(ii) of the HyperCLOVA X SEED Model License Agreement: recipients get a copy of the
+    agreement. Shipped next to the exe rather than only in the repo because the people who receive
+    this app receive the installer, not the source. The weights themselves are downloaded per PC,
+    so this file is the only place the terms travel with the product.
+  -->
+  <ItemGroup>
+    <Content Include="LICENSE-HyperCLOVAX.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
