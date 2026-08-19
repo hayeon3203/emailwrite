@@ -265,8 +265,41 @@
 
 ### M10. 배포 / 자동 업데이트
 
-- [ ] .NET 8 self-contained 게시 (동료 PC에 런타임 사전 설치 불필요)
-- [ ] Inno Setup으로 설치 파일 제작 (Program Files 설치, 시작 메뉴, 제거 프로그램 등록)
+- [x] .NET 8 self-contained 게시 (동료 PC에 런타임 사전 설치 불필요) — 2026-08-19 실행·검증.
+
+  `dotnet publish src\EmailWrite.App -c Release -r win-x64 --self-contained -o publish\EmailWrite`,
+  결과 **198MB / 509 파일**. §8(커널 회귀)이 publish에서 재발하지 않는 것까지 확인했다:
+  `runtimes\win-x64\native\` 밑에 avx/avx2/avx512/noavx/vulkan 다섯 폴더가 남고 루트에 평탄화된
+  `ggml-cpu.dll`이 없다. 크기도 §8에 적힌 값과 일치(avx2 557,568). 실행 확인 시 상태줄
+  `커널 avx2 554K +vulkan · 프리필 3.8s`.
+  - **실행 중이면 publish가 `MSB3027`로 죽는다** — 떠 있는 프로세스가 `EmailWrite.Core.dll`을 잠근다.
+    빌드 스크립트를 만들면 publish 앞에 프로세스 종료를 넣을 것
+- [ ] Inno Setup으로 설치 파일 제작 (Program Files 설치, 시작 메뉴, 제거 프로그램 등록).
+
+  도구는 2026-08-19에 설치·검증했다 — **Inno Setup 6.7.3**, winget 설치,
+  `%LocalAppData%\Programs\Inno Setup 6\ISCC.exe`. 관리자 권한이 필요 없었다(사용자 폴더 설치).
+  샘플 컴파일로 setup.exe 생성까지 확인.
+  - **라이선스 검토 완료 — 사내 배포 가능** (2026-08-19). 무료고 상업적 사용을 명시 허용하며,
+    비용·등록 절차가 없다. 조건 4개 중 우리에게 걸리는 건 "바이너리 재배포 시 저작권 고지와
+    웹사이트 주소 유지" 하나뿐이고, 그건 생성된 setup.exe에 `jrsoftware.org` 문자열과 설치 창
+    시스템 메뉴의 About이 자동으로 남아 저절로 지켜진다(제거 옵션 자체가 없다). 감사 표기는
+    "appreciated but **not required**"라 HyperCLOVA와 달리 약관 동봉·화면 표시 의무가 없다.
+    이번 배포에서 실제 부담은 여전히 HyperCLOVA 하나뿐이다
+  - 라이선스 밖 이슈: **서명 안 된 setup.exe는 SmartScreen 경고가 뜬다.** 코드 서명 인증서를
+    붙이거나, 설치 안내에 "추가 정보 → 실행" 한 줄을 적어두고 넘긴다
+- [ ] **모델 1.06GB를 설치 파일에 같이 넣는다** (결정 2026-08-19). 첫 실행 다운로드를 안 태운다.
+
+  코드는 안 고친다 — `LocalDraftGenerator`가 `File.Exists(_modelPath)`일 때 다운로드를 건너뛰므로,
+  `[Files]`에서 `DestDir: "{commonappdata}\EmailWrite\Models"` + `Flags: onlyifdoesntexist` 한 줄이면
+  끝난다. 실측 크기: 모델 1,081MB + llama 백엔드 105MB + self-contained .NET/WPF 약 150MB —
+  gguf가 이미 4비트라 압축이 거의 안 먹어서 **설치 파일 1.2GB 안팎**이다.
+  - 다운로드 코드는 남긴다. `EMAILWRITE_MODEL`로 다른 gguf를 쓰는 경로와, 모델 폴더를 지운 PC의
+    복구가 그걸로 돈다
+  - SHA-256 검증(`ModelSha256`)은 다운로드본에만 걸리므로 번들본은 안 거친다. Inno 자체 CRC로
+    대체되는데 오히려 낫다 — 지금 URL은 개인이 변환해 올린 파일이라 사라지거나 force-push되면
+    새 PC 설치가 그 자리에서 막힌다. 번들이 그 의존을 없앤다
+  - 성격이 "사용자가 직접 받는다"에서 "우리가 담아 보낸다"(재배포)로 바뀐다. HyperCLOVA X SEED
+    3.1이 재배포 조항이고 (ii)약관 사본·(iv)NOTICE·(v)화면 표시는 이미 지키고 있어 새로 할 건 없다
 - [ ] GitHub 리포 public 전환 (사전 확인: 전체 커밋 히스토리에 시크릿 커밋 이력 없음 확인 완료 — 2026-08-07)
 - [ ] 앱 내 자동 업데이트 체크 (하루 1회 `GET /repos/.../releases/latest` 인증 없이 호출, 새 버전이면 트레이 알림 → 설치 파일 다운로드[모델 다운로드 로직 재사용] → 재실행)
 - [ ] 버전 비교는 `System.Version` 문자열 비교로 충분(semver 라이브러리 불필요)
