@@ -139,6 +139,8 @@ if (args.Contains("--selftest"))
     Check(DraftPromptBuilder.ParseKind("잘 모르겠습니다") == null, "모르는 답에서 라벨을 지어냄");
     Check(DraftPromptBuilder.ParseKind("") == null, "빈 답에서 라벨을 지어냄");
 
+    // §11-2(성격 줄을 턴에 박는 쪽)는 이제 기본값이 아니라 EMAILWRITE_EX_BY_KIND=0으로만 나온다.
+    Environment.SetEnvironmentVariable("EMAILWRITE_EX_BY_KIND", "0");
     var labelled = DraftPromptBuilder.BuildTurns(
         mailCtx, new[] { ChatMessage.FromUser("국문 버전도 만들어달라고") }, "요청").OpeningTurn;
     Check(labelled.Contains("- 성격: 상대에게 부탁하는"), $"성격 줄이 안 들어감: {labelled}");
@@ -195,19 +197,27 @@ if (args.Contains("--selftest"))
         Check(!aTurn.Contains("- 성격:"), $"후보 A인데 여는 턴에 성격 줄이 남아있음: {aTurn}");
 
         // 공유는 보여줄 라운드가 없다. 지어내서 채우지 말고 기존 섞인 세트로 떨어져야 한다.
-        Check(DraftPromptBuilder.PromptFor(mailCtx, "공유").Examples.Count > 4, "공유가 섞인 세트로 안 떨어짐");
+        var sharedSet = DraftPromptBuilder.PromptFor(mailCtx, "공유").Examples;
+        Check(sharedSet.Count > 4, "공유가 섞인 세트로 안 떨어짐");
+        Check(sharedSet.All(e => !e.Text.Contains("- 성격:")), "공유가 라벨 달린 예시 세트로 떨어짐");
         // 자유 작성 경로는 후보 A 대상이 아니다 (예시를 통째로 베끼는 별건 버그가 먼저다).
         Check(DraftPromptBuilder.PromptFor(null, "요청").System == DraftPromptBuilder.FreeSystemPrompt,
             "메일 없는 경로가 후보 A로 새어들어감");
     }
     finally
     {
-        Environment.SetEnvironmentVariable("EMAILWRITE_EX_BY_KIND", null);
+        // 기본값이 켜짐이므로 지우는 게 아니라 "0"으로 꺼야 예전 동작이 나온다.
+        Environment.SetEnvironmentVariable("EMAILWRITE_EX_BY_KIND", "0");
     }
 
     // 끄면 오늘과 완전히 같아야 한다.
     Check(DraftPromptBuilder.PromptFor(mailCtx, "요청").Examples.Any(e => e.Text.Contains("- 성격:")),
         "후보 A를 껐는데 기존 라벨 예시가 안 돌아옴");
+
+    // 환경변수를 아예 안 준 상태가 후보 A여야 한다 — 설치본이 도는 상태가 이것이다.
+    Environment.SetEnvironmentVariable("EMAILWRITE_EX_BY_KIND", null);
+    Check(DraftPromptBuilder.PromptFor(mailCtx, "요청").Examples.All(e => !e.Text.Contains("- 성격:")),
+        "기본값이 후보 A가 아님");
 
     // 인사말 블록. 모델이 아니라 코드가 만드는 유일한 문장이라, 여기가 깨지면 사용자가 매번 손으로
     // 고쳐야 한다.
@@ -423,7 +433,7 @@ if (!args.Contains("--classify")
         // 성격 분류가 켜져 있으면 매 회 무엇으로 판정했는지 같이 찍는다. 이게 없으면 "라벨이
         // 효과가 없다"와 "라벨이 매번 틀렸다"가 같은 표로 보인다.
         var kind = (gen as LocalDraftGenerator)?.LastKind;
-        var mark = Environment.GetEnvironmentVariable("EMAILWRITE_KIND") == "1"
+        var mark = Environment.GetEnvironmentVariable("EMAILWRITE_KIND") != "0"
             ? $"[{kind ?? "판정불가"}] "
             : "";
         Console.WriteLine($"{i + 1,3}. {mark}[{sample.Length,3}자] {sample.Replace("\n", " ")}");

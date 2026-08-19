@@ -95,9 +95,14 @@ internal static class DraftPromptBuilder
         // round is the only thing that carries it. Mail path only for now: the free-writing set has
         // a failure of its own (it gets copied out verbatim, Plans.md M8) that has to be settled
         // before its rounds are worth splitting by direction.
-        if (Flag("EMAILWRITE_EX_BY_KIND") && context != null && MailExamplesFor(kind) is { } matched)
+        if (ByKind)
         {
-            return (SystemPrompt, matched);
+            // 공유·판정불가는 보여줄 라운드가 없으니 섞인 세트로 떨어진다. 그 세트도 성격 줄이
+            // 없는 쪽이어야 한다 — 실제 턴은 이 후보에선 성격 줄을 절대 안 달기 때문에, 라벨
+            // 달린 예시를 쓰면 모델이 실제 턴에서 처음 보는 형식이 된다.
+            return context == null
+                ? (FreeSystemPrompt, FreeExampleTurns)
+                : (SystemPrompt, MailExamplesFor(kind) ?? ExampleTurns);
         }
 
         // The examples carry the 성격 field exactly when the real turn will. A field that first
@@ -464,7 +469,14 @@ internal static class DraftPromptBuilder
     /// switch is off unless its variable is "1", so the measured baseline is what runs by default
     /// and one candidate at a time can be turned on. Same idea as EMAILWRITE_MODEL/THREADS/TEMP.
     /// </summary>
-    private static bool Flag(string name) => Environment.GetEnvironmentVariable(name) == "1";
+    // defaultOn is for the candidates that won their A/B and became the shipped behaviour: unset
+    // means on, and "0" is how they get turned back off for a comparison run.
+    private static bool Flag(string name, bool defaultOn = false) =>
+        Environment.GetEnvironmentVariable(name) is { } value ? value == "1" : defaultOn;
+
+    /// <summary>Candidate A (§11-3), now the default: the direction is carried by which example
+    /// rounds are shown, never by a 성격 line. EMAILWRITE_EX_BY_KIND=0 goes back to §11-2.</summary>
+    private static bool ByKind => Flag("EMAILWRITE_EX_BY_KIND", defaultOn: true);
 
     private static IReadOnlyList<(ChatRole Role, string Text)> BuildFreeExamples(string? kind)
     {
@@ -475,6 +487,19 @@ internal static class DraftPromptBuilder
             (ChatRole.User, "조금 더 부드럽게 바꿔줘."),
             (ChatRole.Assistant, "내일 저녁 약속 관련해서 말씀드립니다. 일정이 여의치 않아 참석이 어려울 것 같습니다. 괜찮으시다면 다음 주 화요일로 미뤄주시면 감사하겠습니다."),
         };
+
+        // A/B knob for the copying bug on this path: with no mail, these four turns are most of
+        // the prompt, and 6 of 20 request-shaped drafts came back as the second assistant turn
+        // above, word for word (Experiments.md C-2). Rounds, not turns, because a round is the
+        // unit that has ever been measured -- 2 removes the revision round (which section 2 says
+        // is what stops a tone change from being answered conversationally), 0 removes everything.
+        // Default 2 is the shipped baseline.
+        var rounds = int.TryParse(
+            Environment.GetEnvironmentVariable("EMAILWRITE_FREE_EX_ROUNDS"), out var r) ? r : 2;
+        if (rounds < 2)
+        {
+            turns.RemoveRange(Math.Max(rounds, 0) * 2, turns.Count - Math.Max(rounds, 0) * 2);
+        }
 
         // Candidate 2. Every turn above is one scenario -- calling off an appointment and moving
         // it -- and the drafts that failed worst applied exactly that move to content that did
@@ -501,6 +526,12 @@ internal static class DraftPromptBuilder
     public static (string OpeningTurn, IReadOnlyList<ChatMessage> Following) BuildTurns(
         EmailContext? context, IReadOnlyList<ChatMessage> conversation, string? kind = null)
     {
+        // Candidate A spends the classifier's answer on the examples and nowhere else: the 성격 line
+        // is dropped here rather than inside Points(), which the example sets are built from at type
+        // load — a flag read there would bake whatever the environment said at first touch.
+        if (ByKind)
+            kind = null;
+
         var intent = conversation.Count > 0 && conversation[0].Role == ChatRole.User
             ? conversation[0].Text
             : null;
@@ -527,10 +558,7 @@ internal static class DraftPromptBuilder
     /// changed what the model is *shown*, while three that told it something outright failed (§3).
     /// </summary>
     private static string Points(string? intent, string? kind) =>
-        // Candidate A wants the classifier's answer spent on the examples and nowhere else. Leaving
-        // the 성격 line in as well would run both fixes at once, and §11-2 measured that line as
-        // harmful on its own — an A/B that cannot separate them is not an A/B.
-        kind == null || Flag("EMAILWRITE_EX_BY_KIND") || !KindDescriptions.TryGetValue(kind, out var description)
+        kind == null || !KindDescriptions.TryGetValue(kind, out var description)
             ? intent ?? ""
             : $"- 성격: {description}\n- 내용: {intent}";
 

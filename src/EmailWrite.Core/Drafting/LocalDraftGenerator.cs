@@ -179,7 +179,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
                 // revision request ("조금 더 부드럽게"), and the continuation path above never
                 // rebuilds the prompt anyway. So this is at most one extra call per conversation —
                 // plus one per "다시", which starts the opening turn over.
-                LastKind = Environment.GetEnvironmentVariable("EMAILWRITE_KIND") == "1"
+                LastKind = Environment.GetEnvironmentVariable("EMAILWRITE_KIND") != "0"
                         && conversation.Count == 1 && conversation[0].Role == ChatRole.User
                     ? await ClassifyAsync(conversation[0].Text, cancellationToken)
                     : null;
