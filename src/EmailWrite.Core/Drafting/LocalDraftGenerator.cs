@@ -145,7 +145,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
             // for a backend that is no longer the only API option, to fix something two clicks
             // away on the screen they are already looking at.
             return "이 PC의 CPU는 AVX2를 지원하지 않아 로컬 모델을 쓸 수 없어요. "
-                 + "위 목록에서 Solar나 Claude를 고르면 API 모드로 쓸 수 있어요 (키가 없으면 입력칸이 같이 떠요).";
+                 + "위 목록에서 Solar를 고르면 API 모드로 쓸 수 있어요 (키가 없으면 입력칸이 같이 떠요).";
         }
 
         try
@@ -716,7 +716,7 @@ public sealed class LocalDraftGenerator : IDraftGenerator, IDisposable
 
     /// <summary>
     /// Renders the system prompt and full visible conversation through the model's own
-    /// chat template — whatever that model's is — mirroring <see cref="ClaudeDraftGenerator"/>'s
+    /// chat template — whatever that model's is — mirroring <see cref="SolarDraftGenerator"/>'s
     /// "resend the whole history every turn" approach instead of keeping session state.
     /// </summary>
     private string BuildPrompt(EmailContext? emailContext, IReadOnlyList<ChatMessage> conversation, string? kind)

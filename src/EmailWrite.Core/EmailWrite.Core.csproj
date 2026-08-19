@@ -13,7 +13,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Office.Interop.Outlook" Version="15.0.4797.1004" />
-    <PackageReference Include="Anthropic" Version="12.39.0" />
     <PackageReference Include="LLamaSharp" Version="0.24.0" />
     <!--
       Both backends on purpose. Vulkan is what makes a turn usable (프리필 29.9s -> 9.0s on this

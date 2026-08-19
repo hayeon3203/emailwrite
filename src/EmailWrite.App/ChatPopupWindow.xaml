@@ -100,7 +100,6 @@
                                   SelectionChanged="BackendCombo_SelectionChanged">
                             <ComboBoxItem Tag="local" Content="로컬 (CLOVA)" />
                             <ComboBoxItem Tag="solar" Content="Solar" />
-                            <ComboBoxItem Tag="claude" Content="Claude" />
                         </ComboBox>
                         <Button x:Name="RestartButton" Content="&#x21BB;" Width="22" Height="22"
                                 Style="{StaticResource FlatIconButtonStyle}" Foreground="#FF8A8A8A"

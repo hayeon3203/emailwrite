@@ -11,9 +11,8 @@ namespace EmailWrite.Core.Drafting;
 /// against the local model on the same axes with DraftProbe's <c>--repeat</c>.
 ///
 /// No SDK: the request is one JSON object and the reply is one string, which is less code than
-/// taking a dependency and leaves nothing to keep up to date. Like
-/// <see cref="ClaudeDraftGenerator"/> the whole conversation is resent every turn, so there is no
-/// KV cache to keep and <c>sessionId</c> is unused.
+/// taking a dependency and leaves nothing to keep up to date. The whole conversation is resent
+/// every turn, so there is no KV cache to keep and <c>sessionId</c> is unused.
 /// </summary>
 public sealed class SolarDraftGenerator : IDraftGenerator
 {

@@ -24,8 +24,8 @@ public static class ApiKeys
 
     /// <summary>
     /// The key under <paramref name="name"/>, or null when neither the file nor the environment
-    /// has one. <paramref name="name"/> is the environment variable's name (UPSTAGE_API_KEY,
-    /// ANTHROPIC_API_KEY) so there is one vocabulary rather than two.
+    /// has one. <paramref name="name"/> is the environment variable's name (UPSTAGE_API_KEY) so
+    /// there is one vocabulary rather than two.
     /// </summary>
     public static string? Get(string name)
     {

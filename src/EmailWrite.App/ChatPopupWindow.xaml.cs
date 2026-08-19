@@ -91,12 +91,11 @@ public partial class ChatPopupWindow : Window
 
         if (!_generators.TryGetValue(tag, out var generator))
         {
-            // Same mapping EMAILWRITE_BACKEND had. Constructing is cheap for all three — the local
+            // Same mapping EMAILWRITE_BACKEND had. Constructing is cheap for both — the local
             // one doesn't touch the weights until the first draft is asked for.
             generator = tag switch
             {
                 "solar" => new SolarDraftGenerator(),
-                "claude" => new ClaudeDraftGenerator(),
                 _ => new LocalDraftGenerator(),
             };
             _generators[tag] = generator;
@@ -129,7 +128,6 @@ public partial class ChatPopupWindow : Window
     private static string? KeyNameFor(string tag) => tag switch
     {
         "solar" => SolarDraftGenerator.KeyName,
-        "claude" => ClaudeDraftGenerator.KeyName,
         _ => null,
     };
 
