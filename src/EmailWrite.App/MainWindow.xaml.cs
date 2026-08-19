@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         StartIdleAnimation();
         SetupTrayIcon();
         RegisterGlobalHotkey();
+        Autostart.EnableOnFirstRun();
         Autostart.RepairPath();
     }
 
@@ -197,9 +198,14 @@ public partial class MainWindow : Window
         {
             Icon = trayIcon,
             Visible = true,
-            Text = "EmailWrite Avatar",
+            Text = "EmailWrite — 더블클릭 또는 F9로 열기",
             ContextMenuStrip = contextMenu
         };
+
+        // The tray icon is the one part of this app that survives a reboot in plain sight, so it
+        // has to be a way in: the avatar can be dragged off to a corner or hidden, and F9 is a key
+        // nobody discovers on their own.
+        _trayIcon.DoubleClick += (_, _) => ToggleChatPopup();
     }
 
     // MouseLeftButtonDown/MouseMove/MouseLeftButtonUp together distinguish a
