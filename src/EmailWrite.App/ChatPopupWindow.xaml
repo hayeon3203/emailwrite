@@ -64,6 +64,8 @@
                 <!-- API key entry, collapsed unless the picked backend has no key -->
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <!-- 정보 줄 (HyperCLOVA X SEED 라이선스 3.1(v) 표시) -->
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- Header -->
@@ -297,6 +299,13 @@
                         Margin="6,0,0,0" Style="{StaticResource RoundAccentButtonStyle}"
                         Click="SendButton_Click" />
             </Grid>
+
+            <!-- 로컬 백엔드가 HyperCLOVA X SEED 가중치로 돌아가므로 표시 의무가 제품 UI에 있다.
+                 트레이 메뉴가 아니라 여기 둔 이유는, 초안을 쓰는 화면이 곧 모델을 쓰는 화면이라
+                 메뉴를 열어본 사람만 보는 문구가 되지 않게 하기 위해서다. -->
+            <TextBlock Grid.Row="4" Text="Powered by HyperCLOVA X" FontSize="9"
+                       Foreground="#FFB0B0B5" HorizontalAlignment="Center" Margin="0,0,0,8"
+                       ToolTip="HyperCLOVA X SEED Model is licensed under the HyperCLOVA X SEED Model License Agreement, Copyright © NAVER Corp. All Rights Reserved." />
         </Grid>
     </Border>
 </Window>

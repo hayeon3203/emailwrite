@@ -92,7 +92,11 @@ llama.cpp가 알아서 CPU로 떨어진다 — 느려질 뿐 실패하지 않는
 
 | 파일 | 크기 | 라이선스 |
 |---|---|---|
-| `midm-2.0-mini-instruct-q4_k_m.gguf` (기본) | 1.33GB | MIT |
-| `hyperclovax-1.5b-instruct-q4_k_m.gguf` | 1.06GB | 조건부 상업 이용 가능 — 배포 전 확인 필요 |
+| `hyperclovax-seed-text-instruct-1.5b-q4_k_m.gguf` (기본) | 1.06GB | HyperCLOVA X SEED — **사내 배포 가능** (확인 2026-08-14). 조건은 유사 서비스로의 상업화 금지고, 이 앱은 사내 초안 도구라 해당하지 않는다. 약관 사본을 exe 옆에 함께 배포한다 (3.1(ii)). 같은 자리에 `NOTICE.txt`가 저작권 문구를 담고(3.1(iv)), 채팅 팝업 최하단에 "Powered by HyperCLOVA X"를 표시한다(3.1(v)) |
+| `midm-2.0-mini-instruct-q4_k_m.gguf` | 1.33GB | MIT |
 
 기본 모델만 자동으로 내려받는다. 나머지는 직접 받아 넣어야 `EMAILWRITE_MODEL`이 먹는다.
+
+기본 모델은 개인이 변환해 올린 파일이라 **다운로드 뒤 SHA-256을 검증한다**
+(`LocalDraftGenerator.ModelSha256`). 업스트림이 force-push하면 검증에서 걸린다 —
+모델을 바꿀 때 파일명·URL·해시 셋을 같이 옮겨야 한다.

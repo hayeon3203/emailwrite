@@ -35,6 +35,10 @@
     <Content Include="LICENSE-HyperCLOVAX.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- Section 3.1(iv): the attribution notice travels as its own file, next to the agreement. -->
+    <Content Include="NOTICE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
