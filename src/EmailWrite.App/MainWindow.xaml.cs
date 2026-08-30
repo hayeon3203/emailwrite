@@ -53,6 +53,9 @@ public partial class MainWindow : Window
         RegisterGlobalHotkey();
         Autostart.EnableOnFirstRun();
         Autostart.RepairPath();
+        // Not awaited: it waits on Explorer to write the entry, and OnLoaded must not hold the UI
+        // thread while the avatar is meant to be appearing.
+        _ = TrayPromotion.PromoteOnFirstRunAsync();
     }
 
     private void RegisterGlobalHotkey()
