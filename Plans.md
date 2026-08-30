@@ -275,7 +275,7 @@
   `커널 avx2 554K +vulkan · 프리필 3.8s`.
   - **실행 중이면 publish가 `MSB3027`로 죽는다** — 떠 있는 프로세스가 `EmailWrite.Core.dll`을 잠근다.
     빌드 스크립트를 만들면 publish 앞에 프로세스 종료를 넣을 것
-- [ ] Inno Setup으로 설치 파일 제작 (Program Files 설치, 시작 메뉴, 제거 프로그램 등록).
+- [x] Inno Setup으로 설치 파일 제작 (시작 메뉴, 제거 프로그램 등록). 관리자 권한을 안 쓴다 — `PrivilegesRequired=lowest`라 Program Files가 아니라 `%LocalAppData%\Programs\EmailWrite`에 깔린다. 자동 시작이 이미 HKCU Run 값 하나로 사용자별이고, 동료 PC에 관리자 권한이 있다는 보장이 없다.
 
   도구는 2026-08-19에 설치·검증했다 — **Inno Setup 6.7.3**, winget 설치,
   `%LocalAppData%\Programs\Inno Setup 6\ISCC.exe`. 관리자 권한이 필요 없었다(사용자 폴더 설치).
@@ -288,7 +288,7 @@
     이번 배포에서 실제 부담은 여전히 HyperCLOVA 하나뿐이다
   - 라이선스 밖 이슈: **서명 안 된 setup.exe는 SmartScreen 경고가 뜬다.** 코드 서명 인증서를
     붙이거나, 설치 안내에 "추가 정보 → 실행" 한 줄을 적어두고 넘긴다
-- [ ] **모델 1.06GB를 설치 파일에 같이 넣는다** (결정 2026-08-19). 첫 실행 다운로드를 안 태운다.
+- [x] **모델 1.06GB를 설치 파일에 같이 넣는다** (결정 2026-08-19). 첫 실행 다운로드를 안 태운다.
 
   코드는 안 고친다 — `LocalDraftGenerator`가 `File.Exists(_modelPath)`일 때 다운로드를 건너뛰므로,
   `[Files]`에서 `DestDir: "{commonappdata}\EmailWrite\Models"` + `Flags: onlyifdoesntexist` 한 줄이면
@@ -301,6 +301,11 @@
     새 PC 설치가 그 자리에서 막힌다. 번들이 그 의존을 없앤다
   - 성격이 "사용자가 직접 받는다"에서 "우리가 담아 보낸다"(재배포)로 바뀐다. HyperCLOVA X SEED
     3.1이 재배포 조항이고 (ii)약관 사본·(iv)NOTICE·(v)화면 표시는 이미 지키고 있어 새로 할 건 없다
+  - **완성 — `EmailWrite-1.0.0.0-setup.exe` 1,206MB** (2026-08-19). `installer\EmailWrite.iss` +
+    `tools\build-installer.ps1`(publish → ISCC, publish 앞에서 프로세스를 죽인다). 버전은
+    `GetVersionNumbersString`로 publish된 exe에서 읽는다 — .iss에 손으로 적으면 csproj의
+    `<Version>`과 갈라진다. `AppMutex`가 앱의 인스턴스 뮤텍스와 같은 이름이라 실행 중이면
+    설치·제거가 닫아달라고 먼저 묻는다
 - [ ] GitHub 리포 public 전환 (사전 확인: 전체 커밋 히스토리에 시크릿 커밋 이력 없음 확인 완료 — 2026-08-07)
 - [ ] 앱 내 자동 업데이트 체크 (하루 1회 `GET /repos/.../releases/latest` 인증 없이 호출, 새 버전이면 트레이 알림 → 설치 파일 다운로드[모델 다운로드 로직 재사용] → 재실행)
 - [ ] 버전 비교는 `System.Version` 문자열 비교로 충분(semver 라이브러리 불필요)

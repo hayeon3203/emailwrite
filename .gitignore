@@ -9,3 +9,6 @@ appsettings.local.json
 
 # 배포 산출물 (self-contained publish, 193MB)
 publish/
+
+# 설치 파일 출력 (1.2GB)
+installer/Output/
